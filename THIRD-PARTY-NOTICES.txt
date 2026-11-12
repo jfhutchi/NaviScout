@@ -1,0 +1,24 @@
+Navi Scout 1.0.0
+
+The original Navi Scout source is MIT licensed. No NX2navi source, generated
+game code, game assets, save files, or derived collectible catalog is bundled.
+The runtime catalog reader is implemented in this repository and uses the
+recipient's own local game resources.
+
+The Windows binary distribution includes components with separate licenses:
+
+- CPython 3.12: Python Software Foundation license and included third-party notices.
+  https://docs.python.org/3/license.html
+- Tcl/Tk 8.6: Tcl/Tk license terms.
+  https://www.tcl-lang.org/software/tcltk/license.html
+- python-zstandard 0.25.0: Gregory Szorc BSD license.
+  https://github.com/indygreg/python-zstandard
+- Zstandard 1.5.7: Meta Platforms BSD license, retained separately as Zstandard-LICENSE.txt.
+  https://github.com/indygreg/python-zstandard/blob/0.25.0/zstd/LICENSE
+- PyInstaller 6.22.3 bootloader: GPL-2.0-or-later with the PyInstaller bootloader
+  exception; applicable Apache-2.0 files retain their notices.
+  https://pyinstaller.org/en/stable/license.html
+
+Full available license texts are included under licenses in the release.
+Build-only dependencies are listed in requirements-build.txt; their installed
+versions are recorded in the build report. They are not game files.
