@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 from datetime import datetime
 
-VERSION = '1.0.1'
+VERSION = '1.1.0'
 BUILD_ID = 'E0F3CCFAF50065AE'
 APP_ID = 'NaviScout.Standalone'
 

@@ -16,6 +16,7 @@ from tkinter import messagebox, ttk
 
 from install_support import extract_payload, install, install_dir, remove_installed
 from settings import BUILD_ID, VERSION, atomic_json
+from skin import Switch, apply_style
 
 HERE = Path(__file__).resolve().parent
 
@@ -53,10 +54,11 @@ def main():
         install(payload, sys.executable)
         return
     root = tk.Tk()
+    apply_style(root)
     root.title(f'Navi Scout {VERSION} - Setup')
-    root.geometry('650x495')
+    root.geometry('650x560')
     root.resizable(False, False)
-    root.configure(bg='#13221f')
+    root.configure(bg='#130f0b')
     if args.remove_installed:
         root.withdraw()
         try:
@@ -77,25 +79,25 @@ def main():
                              creationflags=subprocess.CREATE_NO_WINDOW)
         root.destroy()
         return
-    tk.Label(root, text='NAVI SCOUT', bg='#13221f', fg='#edc35b',
+    tk.Label(root, text='NAVI SCOUT', bg='#130f0b', fg='#edc261',
              font=('Georgia', 27, 'bold')).pack(anchor='w', padx=30, pady=(24, 5))
-    tk.Label(root, text='A separate companion for your NX2navi adventure', bg='#13221f', fg='#f0eadb',
+    tk.Label(root, text='A separate companion for your NX2navi adventure', bg='#130f0b', fg='#f5ebd1',
              font=('Trebuchet MS', 12)).pack(anchor='w', padx=30, pady=(0, 16))
     tk.Label(root, text='Camera-relative collectible radar with edge arrows and alerts\n'
              'Refills for obtained supplies, existing health and magic meters\n'
+             'Run/swim, roll and jump boosts, dive depth and enemy stealth\n'
              'Minigame ammunition and an optional timer freeze\n\n'
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',
-             bg='#13221f', fg='#aac1b5', justify='left', font=('Trebuchet MS', 10)).pack(anchor='w', padx=30)
-    tk.Label(root, text=f'Compatibility: Windows x64 / game build {BUILD_ID}',
-             bg='#13221f', fg='#edc35b', font=('Trebuchet MS', 10, 'bold')).pack(anchor='w', padx=30, pady=15)
+             bg='#130f0b', fg='#b3a084', justify='left', font=('Trebuchet MS', 10)).pack(anchor='w', padx=30)
+    tk.Label(root, text=f'Tested on NX2navi 0.9.2 | Windows x64\nGame build {BUILD_ID}',
+             bg='#130f0b', fg='#edc261', font=('Trebuchet MS', 10, 'bold')).pack(anchor='w', padx=30, pady=15)
     desktop = tk.BooleanVar(value=True)
-    tk.Checkbutton(root, text='Create a Desktop shortcut', variable=desktop, bg='#13221f',
-                   fg='#f0eadb', selectcolor='#1b302b', activebackground='#13221f').pack(anchor='w', padx=26)
+    Switch(root, 'Create a Desktop shortcut', desktop).pack(fill='x', padx=30)
     status = tk.StringVar(value='Installs for your Windows account only. Your game stays where it is.')
-    tk.Label(root, textvariable=status, wraplength=585, bg='#13221f', fg='#aac1b5',
+    tk.Label(root, textvariable=status, wraplength=585, bg='#130f0b', fg='#b3a084',
              justify='left', font=('Trebuchet MS', 9)).pack(fill='x', padx=30, pady=10)
-    row = tk.Frame(root, bg='#13221f')
+    row = tk.Frame(root, bg='#130f0b')
     row.pack(fill='x', padx=30, pady=8)
 
     def preview_guide():

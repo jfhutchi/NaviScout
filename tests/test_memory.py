@@ -325,6 +325,14 @@ class MagicArena(MiniArena):
 
 
 class ActiveMagicTests(unittest.TestCase):
+    def test_loaded_save_can_have_an_uninitialized_capacity_cache(self):
+        game = MagicArena()
+        game.data[0xDBAC] = struct.pack('<iIIIi', 0, 0x76B18200, 0x12D63A97, 0x3AFA3349, 60)
+        with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+            result = game.resources(0x1000, ['magic'])
+        self.assertEqual(result['magic']['current'], 240)
+        self.assertEqual(game.data[0xDBAC][:4], bytes(4))
+
     def test_refill_updates_casting_value_even_when_saved_meter_is_full(self):
         for capacity in (240, 480):
             with self.subTest(capacity=capacity):

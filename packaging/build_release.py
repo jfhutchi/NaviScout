@@ -35,6 +35,7 @@ def source_files():
     files.extend(sorted((ROOT / 'docs').rglob('*.html')))
     files.extend(sorted((ROOT / 'docs/screenshots').glob('*.png')))
     files.extend(sorted((ROOT / 'third_party').glob('*.txt')))
+    files.extend(ROOT / 'assets' / name for name in ('naviscout.png', 'naviscout.ico', 'ICON-PROMPT.txt'))
     return files
 
 
@@ -62,11 +63,13 @@ def collect_licenses(destination):
 def main():
     RELEASE.mkdir(parents=True, exist_ok=True)
     BUILD.mkdir(exist_ok=True)
-    for name in ('radar-preview.png', 'edge-arrow-demo.png', 'connect-your-game.png'):
+    for name in ('radar-preview.png', 'edge-arrow-demo.png', 'connect-your-game.png',
+                 'link-controls.png', 'minigame-controls.png'):
         if not (ROOT / 'docs/screenshots' / name).is_file():
             raise ValueError(f'Missing required release screenshot: {name}')
     run('-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir', '--name', 'NaviScout',
         '--paths', ROOT / 'app', '--distpath', BUILD / 'app-dist', '--workpath', BUILD / 'pyi-app',
+        '--icon', ROOT / 'assets/naviscout.ico', '--add-data', f'{ROOT / "assets"};assets',
         '--specpath', BUILD, ROOT / 'app/companion.py')
     application = BUILD / 'app-dist/NaviScout'
     shutil.copytree(ROOT / 'docs', application / 'docs', dirs_exist_ok=True)
@@ -85,6 +88,7 @@ def main():
     run('-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onefile', '--name', f'NaviScout-Setup-{VERSION}',
         '--paths', ROOT / 'app', '--paths', ROOT / 'packaging', '--add-data', f'{payload};.',
         '--add-data', f'{ROOT / "docs"};docs', '--distpath', RELEASE, '--workpath', BUILD / 'pyi-setup',
+        '--icon', ROOT / 'assets/naviscout.ico', '--add-data', f'{ROOT / "assets"};assets',
         '--specpath', BUILD, ROOT / 'packaging/setup.py')
     shutil.copy2(ROOT / 'docs/START-HERE.html', RELEASE / 'START-HERE.html')
     shutil.copytree(ROOT / 'docs/screenshots', RELEASE / 'screenshots', dirs_exist_ok=True)
@@ -97,7 +101,7 @@ def main():
     with zipfile.ZipFile(RELEASE / f'NaviScout-Source-{VERSION}.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for path in source_files():
             archive.write(path, 'NaviScout-source/' + path.relative_to(ROOT).as_posix())
-    report = dict(version=VERSION, built_utc=datetime.now(timezone.utc).isoformat(), platform='Windows x64',
+    report = dict(version=VERSION, tested_nx2navi_version='0.9.2', built_utc=datetime.now(timezone.utc).isoformat(), platform='Windows x64',
                   python=sys.version.split()[0], pyinstaller=importlib.metadata.version('pyinstaller'),
                   zstandard=importlib.metadata.version('zstandard'), payload_files=len(manifest['files']),
                   source_files=len(source_files()), personal_game_data_included=False,

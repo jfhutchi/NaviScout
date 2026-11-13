@@ -7,9 +7,9 @@ import struct
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from catalog import save_catalog
 from settings import BUILD_ID, atomic_json, backup_profile, validate_game
 from windows_support import executable_running
+from skin import apply_style
 
 
 def configure(data, force=False):
@@ -22,22 +22,23 @@ def configure(data, force=False):
         if catalog.is_file() and json.loads(catalog.read_text())['game_build'] == BUILD_ID:
             return game
     root = tk.Tk()
+    apply_style(root)
     root.title('Navi Scout - Connect your game')
     root.geometry('640x385')
     root.resizable(False, False)
-    root.configure(bg='#13221f')
+    root.configure(bg='#130f0b')
     selected = tk.StringVar()
     result = []
     messages = queue.Queue()
-    tk.Label(root, text='CONNECT YOUR NX2NAVI GAME', bg='#13221f', fg='#edc35b',
+    tk.Label(root, text='CONNECT YOUR NX2NAVI GAME', bg='#130f0b', fg='#edc261',
              font=('Georgia', 17, 'bold')).pack(anchor='w', padx=24, pady=(22, 12))
     tk.Label(root, text='Choose your existing ocarina.exe. Navi Scout stays separate from the game.\n'
              'Close NX2navi once for setup so its profile can be backed up safely.\n'
              'Your radar catalog is generated locally; no game files are downloaded.',
-             justify='left', bg='#13221f', fg='#f0eadb', font=('Trebuchet MS', 10)).pack(anchor='w', padx=24)
-    tk.Label(root, text=f'Supported game build: {BUILD_ID}  |  Windows x64',
-             bg='#13221f', fg='#aac1b5', font=('Trebuchet MS', 9)).pack(anchor='w', padx=24, pady=12)
-    row = tk.Frame(root, bg='#13221f')
+             justify='left', bg='#130f0b', fg='#f5ebd1', font=('Trebuchet MS', 10)).pack(anchor='w', padx=24)
+    tk.Label(root, text=f'Tested on NX2navi 0.9.2  |  Build {BUILD_ID}  |  Windows x64',
+             bg='#130f0b', fg='#b3a084', font=('Trebuchet MS', 9)).pack(anchor='w', padx=24, pady=12)
+    row = tk.Frame(root, bg='#130f0b')
     row.pack(fill='x', padx=24)
     ttk.Entry(row, textvariable=selected).pack(side='left', fill='x', expand=True)
 
@@ -49,8 +50,8 @@ def configure(data, force=False):
 
     ttk.Button(row, text='Browse...', command=browse).pack(side='right', padx=(8, 0))
     status = tk.StringVar(value='Setup creates a verified profile backup before enabling the companion.')
-    tk.Label(root, textvariable=status, wraplength=590, justify='left', bg='#13221f',
-             fg='#aac1b5', font=('Trebuchet MS', 10)).pack(fill='x', padx=24, pady=16)
+    tk.Label(root, textvariable=status, wraplength=590, justify='left', bg='#130f0b',
+             fg='#b3a084', font=('Trebuchet MS', 10)).pack(fill='x', padx=24, pady=16)
 
     def prepare():
         try:
@@ -65,6 +66,7 @@ def configure(data, force=False):
 
         def work():
             try:
+                from catalog import save_catalog
                 backup = backup_profile(game, data / 'backups')
                 if executable_running(game / 'ocarina.exe'):
                     raise ValueError('NX2navi started during backup. Close it and prepare again.')
@@ -72,7 +74,7 @@ def configure(data, force=False):
                 atomic_json(config_path, dict(game_dir=str(game), game_build=BUILD_ID,
                                              backup=str(backup) if backup else None))
                 messages.put(('done', game))
-            except (OSError, ValueError, KeyError, RuntimeError, struct.error) as error:
+            except (OSError, ValueError, KeyError, RuntimeError, ImportError, struct.error) as error:
                 messages.put(('error', str(error)))
 
         threading.Thread(target=work, daemon=True).start()
@@ -92,7 +94,7 @@ def configure(data, force=False):
         messagebox.showerror('Game setup', value, parent=root)
         root.after(100, poll)
 
-    row = tk.Frame(root, bg='#13221f')
+    row = tk.Frame(root, bg='#130f0b')
     row.pack(fill='x', padx=24, pady=8)
     prepare_button = ttk.Button(row, text='Prepare my game', command=prepare)
     prepare_button.pack(side='right')

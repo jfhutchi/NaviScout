@@ -12,4 +12,16 @@ Published release: https://github.com/jfhutchi/NaviScout/releases/tag/v1.0.0
 
 Upstream offer: https://github.com/tangerineturtle1/NX2navi/issues/724
 
-The current game helper remains independent of this source/package work. Only explicit source/documentation/screenshot/release files enter the distribution. User-reported diving timer success is distinguished from agent-observed tests.
+The local development helper is updated from this source; its personal settings, saves and backups remain outside the repository. Only explicit source/documentation/screenshot/release files enter the distribution. User-reported diving timer success is distinguished from agent-observed tests.
+
+
+# Version 1.1.0
+
+- [x] Separate Items, Link and Minigames controls with independent refill switches.
+- [x] Add confirmed run/swim, roll, jump and dive-depth controls.
+- [x] Add enemy stealth using an independently owned native perception reason; verify On and Off live.
+- [x] Match the in-game brown/gold menus, use toggle switches and add the Navi/Triforce icon.
+- [x] Refresh all six screenshots, README and guide; identify NX2navi 0.9.2 as the tested port.
+- [x] Pass 118 automated tests and code review; verify original-code and parameter restoration.
+- [x] Rebuild and verify standalone application, installer, source archive and complete share ZIP.
+- [ ] Push clean source and publish the matching GitHub release.

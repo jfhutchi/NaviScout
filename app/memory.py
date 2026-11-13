@@ -10,6 +10,12 @@ from core import RESOURCES, murmur3, refill_target
 OWNERSHIP_FLAGS = {'bombchus': (0x5AB49C8E, 8852), 'magic_beans': (0x6D39C600, 8896),
                    'scrub_seeds': (0xCFBB16F6, 8934), 'magic': (0xB1309073, 8888)}
 
+# GroundSpeedScale affects rolling; normal walking uses animation root movement.
+MOVEMENT_PARAMETERS = {'roll': (0x2A0, 0x561), 'jump': (0x334, 0x563),
+                       'swim': (0x4F4, 0x5BC), 'swim_heavy': (0x4EC, 0x5BD),
+                       'swim_dash': (0x4C4, 0x5BE), 'swim_dash_heavy': (0x4BC, 0x5BF)}
+MOVEMENT_LIMITS = {name: 32 if name.startswith('swim') else 8 for name in MOVEMENT_PARAMETERS}
+
 K = C.WinDLL('kernel32', use_last_error=True)
 K.OpenProcess.argtypes = [W.DWORD, W.BOOL, W.DWORD]
 K.OpenProcess.restype = W.HANDLE
@@ -38,6 +44,10 @@ class NotReady(Exception):
 
 class DifferentInstallation(ValueError):
     """A process with the same name belongs to another installation."""
+
+
+class StaleParameter(NotReady):
+    """A cached parameter resource was freed or replaced; never write through it."""
 
 
 class Game:
@@ -248,10 +258,215 @@ class Game:
                 or self.pointer(binding + 0x20) != self.BASE + 0x4B648C8):
             raise NotReady('Active magic binding owner validation failed')
         maximum, current_hash, max_hash, auxiliary_hash, current = self.unpack(binding + 0x34, '<iIIIi')
+        # A freshly loaded Player can leave the bound maximum cache at zero.
+        # GameData's validated owned meter remains the limit used for every refill.
         if (current_hash != 0x76B18200 or max_hash != 0x12D63A97 or auxiliary_hash != 0x3AFA3349
-                or maximum != capacity or capacity not in (240, 480) or not 0 <= current <= maximum):
+                or maximum not in (0, capacity) or capacity not in (240, 480) or not 0 <= current <= capacity):
             raise NotReady('Active magic binding/capacity validation failed')
         return binding + 0x44
+
+    def player_parameter_context(self):
+        actor = self.pointer(self.pointer(self.BASE + 0x4E371D0) + 0x480)
+        if not actor or self.read(self.pointer(actor + 0x20), 7) != b'Player\0':
+            raise NotReady('Link is not available for movement controls')
+        table = self.pointer(actor + 0x270)
+        component = self.pointer(table + 0x358)
+        if self.pointer(component) != self.BASE + 0x4B4DFC0 or self.pointer(component + 0x18) != actor:
+            raise NotReady('Link movement component validation failed')
+        blackboard = self.pointer(table + 0xA8)
+        if self.pointer(blackboard) != self.BASE + 0x4C60D70:
+            raise NotReady('Link parameter table validation failed')
+        count = self.unpack(blackboard + 0x30, '<I')[0]
+        entries = self.pointer(blackboard + 0x38)
+        if not 1 <= count <= 128:
+            raise NotReady('Link parameter table size is invalid')
+        matches = []
+        for index in range(count):
+            entry = self.pointer(entries + index * 8)
+            if self.unpack(entry, '<I')[0] == 0x6B7E094A:
+                matches.append(self.pointer(entry + 8))
+        if len(matches) != 1 or self.pointer(matches[0]) != self.BASE + 0x4BF9010:
+            raise NotReady('Link movement parameter descriptor is invalid')
+        descriptor = matches[0]
+        parameter = self.pointer(descriptor + 0x150)
+        if self.pointer(parameter) != self.BASE + 0x4B6D1A8:
+            raise NotReady('Link movement parameter type is invalid')
+        return descriptor, parameter, self.read(parameter, 0x28)
+
+    def validate_parameter_context(self, context):
+        descriptor, parameter, header = context
+        try:
+            valid = (self.pointer(descriptor) == self.BASE + 0x4BF9010
+                     and self.pointer(descriptor + 0x150) == parameter
+                     and self.read(parameter, 0x28) == header
+                     and self.pointer(parameter) == self.BASE + 0x4B6D1A8)
+        except NotReady as error:
+            raise StaleParameter('Link parameter resource was released; write cancelled') from error
+        if not valid:
+            raise StaleParameter('Link parameter resource changed; write cancelled')
+        return parameter
+
+    def parameter_snapshot(self, context, name):
+        parameter = self.validate_parameter_context(context)
+        offset, flag_offset = MOVEMENT_PARAMETERS[name]
+        original = self.read(parameter + offset, 4)
+        flag = self.read(parameter + flag_offset, 1)[0]
+        seen = set()
+        while True:
+            if parameter in seen or len(seen) >= 8 or self.pointer(parameter) != self.BASE + 0x4B6D1A8:
+                raise NotReady('Link parameter inheritance is invalid')
+            seen.add(parameter)
+            inherited_flag = self.read(parameter + flag_offset, 1)[0]
+            if inherited_flag not in (0, 1):
+                raise NotReady('Link parameter override flag is invalid')
+            value = self.unpack(parameter + offset, '<f')[0]
+            if not math.isfinite(value) or not 0.1 <= value <= MOVEMENT_LIMITS[name]:
+                raise NotReady('Link movement parameter is outside the supported range')
+            parent = self.pointer(parameter + 0x18)
+            if inherited_flag or not self.pointer(parameter + 0x10) or not parent:
+                return original, flag, value
+            if self.unpack(parent + 0xC, '<I')[0] != self.unpack(parameter + 0x20, '<I')[0]:
+                return original, flag, value
+            next_parameter = self.pointer(parent)
+            if not next_parameter:
+                return original, flag, value
+            parameter = next_parameter
+
+    def parameter_replace(self, context, name, expected, value, flag):
+        offset, flag_offset = MOVEMENT_PARAMETERS[name]
+        parameter = self.validate_parameter_context(context)
+        if (self.read(parameter + offset, 4), self.read(parameter + flag_offset, 1)[0]) != expected:
+            raise NotReady(f'Link {name} setting changed outside Navi Scout; write cancelled')
+        number = struct.unpack('<f', value)[0]
+        if flag not in (0, 1) or not math.isfinite(number) or not 0.1 <= number <= MOVEMENT_LIMITS[name]:
+            raise ValueError('Invalid Link movement override')
+        # Clear inheritance override before restoring; enable it only after the new value is ready.
+        if not flag:
+            self.write_verified(parameter + flag_offset, bytes([flag]), f'{name} inheritance')
+        self.write_verified(parameter + offset, value, f'Link {name}')
+        if flag:
+            self.write_verified(parameter + flag_offset, bytes([flag]), f'{name} inheritance')
+
+    def validate_dive_identity(self, identity):
+        actor, ai, table, entry, module, wrapper, module_slot, node_slot, node = identity
+        module_count = self.unpack(module + 0x18, '<I')[0]
+        module_array = self.pointer(module + 0x20)
+        node_count = self.unpack(wrapper + 0x60, '<I')[0]
+        node_array = self.pointer(wrapper + 0x68)
+        if (not 1 <= module_count <= 512 or not 1 <= node_count <= 512
+                or not 0 <= module_slot - module_array < module_count * 8
+                or (module_slot - module_array) % 8
+                or not 0 <= node_slot - node_array < node_count * 8
+                or (node_slot - node_array) % 8):
+            return False
+        if entry not in self.dive_module_entries(table):
+            return False
+        return (self.pointer(self.pointer(self.BASE + 0x4E371D0) + 0x480) == actor
+                and self.read(self.pointer(actor + 0x20), 7) == b'Player\0'
+                and self.pointer(self.pointer(actor + 8) + 0x518) == ai
+                and self.pointer(ai) == self.BASE + 0x4B47190 and self.pointer(ai + 0x18) == actor
+                and self.pointer(ai + 0x440) == table and self.pointer(entry + 0x18) == module
+                and self.pointer(module) == self.BASE + 0x4B479E8 and self.pointer(module + 0x1F0) == actor
+                and self.pointer(module_slot) == wrapper and self.pointer(wrapper) == self.BASE + 0x4C26670
+                and self.pointer(wrapper + 8) == module and self.pointer(node_slot) == node
+                and self.pointer(node) == self.BASE + 0x49CAC00 and self.pointer(node + 8) == wrapper)
+
+    def dive_module_entries(self, table):
+        count = self.unpack(table, '<I')[0]
+        buckets = self.pointer(table + 8)
+        if not 1 <= count <= 64:
+            raise NotReady('Dive controller table size is invalid')
+        entries = set()
+        for bucket in range(count):
+            entry = self.pointer(buckets + bucket * 8)
+            while entry and entry not in entries:
+                if len(entries) >= 256:
+                    raise NotReady('Dive controller table exceeds the supported size')
+                entries.add(entry)
+                entry = self.pointer(entry)
+        return entries
+
+    def dive_context(self):
+        identity = getattr(self, '_dive_identity', None)
+        if identity:
+            try:
+                valid = self.validate_dive_identity(identity)
+            except NotReady:
+                valid = False
+            if not valid:
+                identity = self._dive_identity = None
+        if identity is None:
+            actor = self.pointer(self.pointer(self.BASE + 0x4E371D0) + 0x480)
+            if not actor or self.read(self.pointer(actor + 0x20), 7) != b'Player\0':
+                raise NotReady('Waiting for Link to load')
+            owner = self.pointer(actor + 8)
+            if self.pointer(owner) != self.BASE + 0x4BF78E0:
+                raise NotReady('Dive actor layout validation failed')
+            ai = self.pointer(owner + 0x518)
+            if self.pointer(ai) != self.BASE + 0x4B47190 or self.pointer(ai + 0x18) != actor:
+                raise NotReady('Dive controller ownership validation failed')
+            table = self.pointer(ai + 0x440)
+            if not table:
+                return None
+            count = self.unpack(table, '<I')[0]
+            buckets = self.pointer(table + 8)
+            if not 1 <= count <= 64:
+                raise NotReady('Dive controller table size is invalid')
+            matches, seen = [], set()
+            for bucket in range(count):
+                entry = self.pointer(buckets + bucket * 8)
+                while entry and entry not in seen:
+                    if len(seen) >= 256:
+                        raise NotReady('Dive controller table exceeds the supported size')
+                    seen.add(entry)
+                    module = self.pointer(entry + 0x18)
+                    if (module and self.pointer(module) == self.BASE + 0x4B479E8
+                            and self.pointer(module + 0x1F0) == actor):
+                        length = self.unpack(module + 0x18, '<I')[0]
+                        slots = self.pointer(module + 0x20)
+                        if length > 512:
+                            raise NotReady('Dive module size is invalid')
+                        for index in range(length):
+                            module_slot = slots + index * 8
+                            wrapper = self.pointer(module_slot)
+                            if not wrapper or self.pointer(wrapper) != self.BASE + 0x4C26670:
+                                continue
+                            if self.pointer(wrapper + 8) != module:
+                                raise NotReady('Dive module ownership changed')
+                            size = self.unpack(wrapper + 0x60, '<I')[0]
+                            nodes = self.pointer(wrapper + 0x68)
+                            if size > 512:
+                                raise NotReady('Dive action table size is invalid')
+                            for offset in range(size):
+                                node_slot = nodes + offset * 8
+                                node = self.pointer(node_slot)
+                                if node and self.pointer(node) == self.BASE + 0x49CAC00:
+                                    candidate = (actor, ai, table, entry, module, wrapper,
+                                                 module_slot, node_slot, node)
+                                    if not self.validate_dive_identity(candidate):
+                                        raise NotReady('Dive action ownership changed')
+                                    matches.append(candidate)
+                    entry = self.pointer(entry)
+            if not matches:
+                return None
+            if len(matches) != 1:
+                raise NotReady('Dive action is ambiguous; writes paused')
+            identity = self._dive_identity = matches[0]
+        node = identity[-1]
+        phase = self.unpack(node + 0x20, '<I')[0]
+        depth = self.unpack(node + 0x30, '<f')[0]
+        if phase > 7 or not math.isfinite(depth) or not 0 <= depth <= 100000:
+            raise NotReady('Dive state or depth is invalid')
+        return dict(identity=identity, phase=phase, depth=depth)
+
+    def set_dive_depth(self, context, expected, wanted):
+        if not math.isfinite(wanted) or not 3 <= wanted <= 100000:
+            raise ValueError('Invalid dive depth override')
+        current = self.dive_context()
+        if (current is None or current['identity'] != context['identity']
+                or current['phase'] != context['phase'] or current['depth'] != expected):
+            raise NotReady('Dive changed during update; write cancelled')
+        self.write_verified(context['identity'][-1] + 0x30, struct.pack('<f', wanted), 'Link dive limit')
 
     def minigame_context(self, manager):
         # SetItemForMiniGame assigns these transient PlayerStatus fields; the HUD reads 969.

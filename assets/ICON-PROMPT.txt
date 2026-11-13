@@ -1,0 +1,5 @@
+Generated with the built-in image generation tool.
+
+Prompt: One transparent Windows icon for Navi Scout: Navi as a glowing cyan-blue fairy with four luminous white/pale-blue wings, above and partly behind a golden Triforce of three triangles with the central gap. A compact, bold silhouette readable at desktop icon sizes, restrained blue glow, warm gold highlights, dark edge. No text, border, tile or background scene.
+
+The PNG is the original generated asset. ICO files are Windows-format exports at standard icon sizes.

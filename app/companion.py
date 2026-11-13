@@ -20,12 +20,30 @@ import winsound
 from core import RESOURCES, collected, nearby, radar_edge_target, radar_offset
 from hotkeys import GlobalHotkey
 from memory import Game, NotReady
+from player import PlayerModifiers
+from running import RunSpeed
+from stealth import EnemyStealth
+from diving import DIVE_MODES, DiveLimit
 from timers import TimerHold
+from skin import ASSETS, BG, PANEL, TEXT, MUTED, GOLD, FRAME, Switch, ChoiceStrip, apply_style
 from settings import VERSION, atomic_json, user_data, validate_game
 
 HERE = Path(__file__).resolve().parent
-BG, PANEL, TEXT, MUTED = '#13221f', '#1b302b', '#f0eadb', '#aac1b5'
-GOLD, HEART, LINK = '#edc35b', '#ff8b9e', '#74e0c6'
+HEART, LINK = '#ff8b9e', '#74e0c6'
+
+
+def migrate_preferences(settings):
+    settings = dict(settings)
+    if not settings.get('run_swim_v2'):
+        settings['roll_speed'] = settings.get('run_speed', False)
+        settings['run_speed'] = False
+    if 'link_auto' not in settings:
+        settings['link_auto'] = settings.get('auto', False)
+    if not any(key.startswith('minigame_refill_') for key in settings):
+        settings['minigames'] = settings.get('minigames', True) and settings.get('auto', False)
+        for name in ('bombchus', 'seeds', 'arrows'):
+            settings[f'minigame_refill_{name}'] = settings.get(f'refill_{name}', True)
+    return settings
 
 
 class Companion:
@@ -42,15 +60,30 @@ class Companion:
             subprocess.Popen([str(self.executable)], cwd=self.game_dir)
         self.root = tk.Tk()
         self.root.title('Navi Scout - Radar & Refills')
-        self.root.configure(bg=BG)
-        self.root.geometry(f'370x900+{max(10, self.root.winfo_screenwidth() - 395)}+80')
+        apply_style(self.root)
+        height = min(1000, self.root.winfo_screenheight() - 70)
+        self.root.geometry(f'440x{height}+{max(10, self.root.winfo_screenwidth() - 465)}+20')
         self.root.resizable(False, False)
         self.root.attributes('-topmost', True)
         self.root.attributes('-alpha', 1.0 if demo else 0.94)
         self.root.protocol('WM_DELETE_WINDOW', self.close)
         self.root.report_callback_exception = self.callback_error
         self.auto = tk.BooleanVar(value=False)
-        self.minigames = tk.BooleanVar(value=True)
+        self.link_auto = tk.BooleanVar(value=False)
+        self.run_speed = tk.BooleanVar(value=False)
+        self.roll_speed = tk.BooleanVar(value=False)
+        self.jump_height = tk.BooleanVar(value=False)
+        self.invisible = tk.BooleanVar(value=False)
+        self.invisible_text = tk.StringVar(value='Enemies: normal detection')
+        self.enemy_stealth = EnemyStealth()
+        self.player_modifiers = PlayerModifiers()
+        self.run_modifier = RunSpeed()
+        self.movement_text = tk.StringVar(value='Movement: normal')
+        self.dive_mode = tk.StringVar(value='Off')
+        self.dive_text = tk.StringVar(value='Dive limit: normal scale depth')
+        self.dive_limit = DiveLimit()
+        self.minigames = tk.BooleanVar(value=False)
+        self.minigame_enabled = {name: tk.BooleanVar(value=True) for name in ('bombchus', 'seeds', 'arrows')}
         self.minigame_text = tk.StringVar(value='Minigame ammo: waiting for a round')
         self.freeze_timer = tk.BooleanVar(value=False)
         self.timer_text = tk.StringVar(value='Timer: waiting for a timed minigame')
@@ -69,7 +102,7 @@ class Companion:
         self.enabled = {name: tk.BooleanVar(value=True) for name in RESOURCES}
         preferences = self.data_dir / 'preferences.local.json'
         if preferences.exists() and not demo:
-            settings = json.loads(preferences.read_text())
+            settings = migrate_preferences(json.loads(preferences.read_text()))
             for key, var in self.preference_vars().items():
                 if key in settings:
                     value = settings[key]
@@ -79,15 +112,20 @@ class Companion:
                         raise ValueError('Invalid radar range')
                     if key == 'alert_radius' and value not in (10, 15, 25, 40, 60):
                         raise ValueError('Invalid alert radius')
+                    if key == 'dive_mode' and value not in DIVE_MODES:
+                        raise ValueError('Invalid dive limit preference')
                     var.set(value)
         self.last_near = set()
         self.last_sound = 0.0
         self.next_attach = 0.0
         self.next_record = 0.0
         self.once = False
+        self.link_once = False
         self.last_rows = []
         self.hidden = False
         self.stopped = False
+        self.closing = False
+        self.close_job = None
         self.had_game = self.game is not None
         try:
             self.hotkey = None if demo else GlobalHotkey()
@@ -117,83 +155,143 @@ class Companion:
         self.root.after(50, self.refresh_radar)
         self.root.after(25, self.poll_hotkey)
         self.root.after(100, self.refresh_timer)
+        self.root.after(100, self.refresh_player)
+        self.root.after(100, self.refresh_stealth)
+        self.root.after(100, self.refresh_diving)
 
     def preference_vars(self):
-        return dict(auto=self.auto, minigames=self.minigames, freeze_timer=self.freeze_timer,
+        return dict(auto=self.auto, link_auto=self.link_auto, run_speed=self.run_speed, roll_speed=self.roll_speed,
+                    jump_height=self.jump_height, invisible=self.invisible,
+                    minigames=self.minigames, freeze_timer=self.freeze_timer,
+                    dive_mode=self.dive_mode,
                     sound=self.sound, skulls=self.skulls, hearts=self.hearts,
                     range=self.range, alert_radius=self.alert_radius,
-                    **{f'refill_{name}': var for name, var in self.enabled.items()})
+                    **{f'refill_{name}': var for name, var in self.enabled.items()},
+                    **{f'minigame_refill_{name}': var for name, var in self.minigame_enabled.items()})
 
     def save_preferences(self, *_):
         if self.demo:
             return
         settings = {key: var.get() for key, var in self.preference_vars().items()}
+        settings['run_swim_v2'] = True
         target = self.data_dir / 'preferences.local.json'
         temp = target.with_suffix('.tmp')
         temp.write_text(json.dumps(settings, indent=2))
         temp.replace(target)
 
     def label(self, text=None, variable=None, **kw):
+        parent = kw.pop('parent', self.root)
         options = dict(bg=BG, fg=TEXT, anchor='w', font=('Trebuchet MS', 10))
         options.update(kw)
-        widget = tk.Label(self.root, text=text, textvariable=variable, **options)
+        widget = tk.Label(parent, text=text, textvariable=variable, **options)
         widget.pack(fill='x', padx=14, pady=2)
         return widget
 
     def build_ui(self):
-        self.label('NAVI SCOUT', fg=GOLD, font=('Georgia', 19, 'bold'), pady=5)
-        self.label(variable=self.area, font=('Trebuchet MS', 11, 'bold'))
+        header = tk.Frame(self.root, bg=PANEL, highlightthickness=1, highlightbackground=FRAME)
+        header.pack(fill='x', padx=12, pady=(10, 6))
+        icon = ASSETS / 'naviscout.png'
+        if icon.is_file():
+            original = tk.PhotoImage(file=str(icon))
+            self.header_icon = original.subsample(max(1, original.width() // 54))
+            tk.Label(header, image=self.header_icon, bg=PANEL).pack(side='left', padx=(10, 6), pady=4)
+        title = tk.Frame(header, bg=PANEL)
+        title.pack(side='left', pady=7)
+        tk.Label(title, text='Navi Scout', bg=PANEL, fg=GOLD,
+                 font=('Georgia', 23, 'bold')).pack(anchor='w')
+        tk.Label(title, text='RADAR  /  TRAINER', bg=PANEL, fg=MUTED,
+                 font=('Trebuchet MS', 8)).pack(anchor='w')
+        self.label(variable=self.area, font=('Georgia', 11, 'bold'))
         self.label(variable=self.counts, fg=MUTED, font=('Trebuchet MS', 9))
-        self.canvas = tk.Canvas(self.root, width=340, height=260, bg=PANEL, highlightthickness=0)
+        self.canvas = tk.Canvas(self.root, width=408, height=230, bg=PANEL,
+                                highlightthickness=1, highlightbackground=FRAME)
         self.canvas.pack(padx=14, pady=5)
-        self.label(variable=self.alert, fg=GOLD, wraplength=342, height=2)
+        self.label(variable=self.alert, fg=GOLD, wraplength=410, height=2)
         row = tk.Frame(self.root, bg=BG)
         row.pack(fill='x', padx=12)
         for title, var in [('Skulls', self.skulls), ('Hearts', self.hearts), ('Sound', self.sound)]:
-            tk.Checkbutton(row, text=title, variable=var, bg=BG, fg=TEXT, selectcolor=PANEL,
-                           activebackground=BG, activeforeground=TEXT).pack(side='left')
+            Switch(row, title, var, width=134, compact=True).pack(side='left', padx=1)
         row = tk.Frame(self.root, bg=BG)
-        row.pack(fill='x', padx=14, pady=3)
+        row.pack(fill='x', padx=14, pady=5)
         tk.Label(row, text='Radar m', bg=BG, fg=MUTED).pack(side='left')
         ttk.Combobox(row, textvariable=self.range, values=(40, 60, 100, 200, 500),
-                     width=5, state='readonly').pack(side='left', padx=5)
-        tk.Label(row, text='Alert m', bg=BG, fg=MUTED).pack(side='left', padx=(15, 0))
+                     width=5, state='readonly').pack(side='left', padx=7)
+        tk.Label(row, text='Alert m', bg=BG, fg=MUTED).pack(side='left', padx=(24, 0))
         ttk.Combobox(row, textvariable=self.alert_radius, values=(10, 15, 25, 40, 60),
-                     width=5, state='readonly').pack(side='left', padx=5)
-        self.label('REFILL OWNED ITEMS & METERS', fg=GOLD, font=('Trebuchet MS', 10, 'bold'), pady=4)
-        grid = tk.Frame(self.root, bg=BG)
-        grid.pack(fill='x', padx=10)
-        for i, (name, value) in enumerate(self.resource_text.items()):
-            tk.Checkbutton(grid, textvariable=value, variable=self.enabled[name], anchor='w', width=23,
-                           bg=BG, fg=TEXT, selectcolor=PANEL, activebackground=BG,
-                           activeforeground=TEXT, font=('Trebuchet MS', 9)).grid(row=i // 2, column=i % 2, sticky='w')
-        row = tk.Frame(self.root, bg=BG)
-        row.pack(fill='x', padx=12, pady=5)
-        tk.Checkbutton(row, text='Keep topped up', variable=self.auto, bg=BG, fg=TEXT,
-                       selectcolor=PANEL, activebackground=BG, activeforeground=TEXT).pack(side='left')
+                     width=5, state='readonly').pack(side='left', padx=7)
+        self.controls = ttk.Notebook(self.root, style='Scout.TNotebook', height=365)
+        self.controls.pack(fill='x', padx=12, pady=(5, 4))
+        items, link, games = (tk.Frame(self.controls, bg=BG) for _ in range(3))
+        for frame, title in ((items, 'Items'), (link, 'Link'), (games, 'Minigames')):
+            self.controls.add(frame, text=title)
+        self.label('Owned supplies', parent=items, fg=GOLD, font=('Georgia', 12), pady=5)
+        grid = tk.Frame(items, bg=BG)
+        grid.pack(fill='x', padx=8)
+        supplies = [name for name in RESOURCES if name not in ('health', 'magic')]
+        for i, name in enumerate(supplies):
+            Switch(grid, '', self.enabled[name], textvariable=self.resource_text[name],
+                   width=196, compact=True).grid(row=i // 2, column=i % 2, padx=1, pady=2)
+        row = tk.Frame(items, bg=BG)
+        row.pack(fill='x', padx=9, pady=9)
+        Switch(row, 'Keep topped up', self.auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
         ttk.Button(row, text='Refill once', command=self.refill_once).pack(side='right')
-        tk.Checkbutton(self.root, text='Minigame ammo (uses checked resources)', variable=self.minigames,
-                       bg=BG, fg=TEXT, selectcolor=PANEL, activebackground=BG,
-                       activeforeground=TEXT).pack(anchor='w', padx=12)
-        self.label(variable=self.minigame_text, fg=MUTED, font=('Trebuchet MS', 9))
-        tk.Checkbutton(self.root, text='Freeze minigame timer', variable=self.freeze_timer,
-                       bg=BG, fg=TEXT, selectcolor=PANEL, activebackground=BG,
-                       activeforeground=TEXT).pack(anchor='w', padx=12)
-        self.label(variable=self.timer_text, fg=MUTED, font=('Trebuchet MS', 9))
-        self.label(variable=self.status, fg=MUTED, font=('Trebuchet MS', 8), wraplength=342, height=3)
-        footer = 'F8: hide/show  |  drag title bar to move  |  X: stop cheats'
+        self.label('Unobtained items remain locked. Caps follow your bags and wallet.',
+                   parent=items, fg=MUTED, font=('Trebuchet MS', 9), wraplength=380)
+        self.label('Health, magic & abilities', parent=link, fg=GOLD, font=('Georgia', 12), pady=4)
+        row = tk.Frame(link, bg=BG)
+        row.pack(fill='x', padx=8)
+        for name in ('health', 'magic'):
+            Switch(row, '', self.enabled[name], textvariable=self.resource_text[name],
+                   width=196, compact=True).pack(side='left', padx=1)
+        row = tk.Frame(link, bg=BG)
+        row.pack(fill='x', padx=9, pady=4)
+        Switch(row, 'Keep meters topped up', self.link_auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
+        ttk.Button(row, text='Refill once', command=self.refill_link_once).pack(side='right')
+        Switch(link, 'Run / swim speed 2x', self.run_speed).pack(fill='x', padx=9, pady=2)
+        row = tk.Frame(link, bg=BG)
+        row.pack(fill='x', padx=8, pady=2)
+        for title, var in [('Roll speed 2x', self.roll_speed), ('Jump height 2x', self.jump_height)]:
+            Switch(row, title, var, width=196, compact=True).pack(side='left', padx=1)
+        Switch(link, 'Invisible to enemies', self.invisible).pack(fill='x', padx=9, pady=2)
+        self.label(variable=self.invisible_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
+        self.label(variable=self.movement_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
+        row = tk.Frame(link, bg=BG)
+        row.pack(fill='x', padx=12, pady=4)
+        tk.Label(row, text='Dive limit', bg=BG, fg=GOLD, font=('Georgia', 11)).pack(side='left')
+        ChoiceStrip(row, self.dive_mode, DIVE_MODES).pack(side='right')
+        self.label(variable=self.dive_text, parent=link, fg=MUTED, font=('Trebuchet MS', 9), wraplength=380)
+        self.label('Minigame assists', parent=games, fg=GOLD, font=('Georgia', 12), pady=6)
+        Switch(games, 'Keep round ammo topped up', self.minigames).pack(fill='x', padx=9, pady=4)
+        for name, var in self.minigame_enabled.items():
+            Switch(games, name.title(), var).pack(fill='x', padx=9, pady=2)
+        self.label(variable=self.minigame_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
+        Switch(games, 'Freeze minigame timer', self.freeze_timer).pack(fill='x', padx=9, pady=5)
+        self.label(variable=self.timer_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
+        self.label(variable=self.status, fg=MUTED, font=('Trebuchet MS', 8), wraplength=410, height=3)
+        footer = 'F8: hide/show  |  drag title bar to move  |  X: stop trainer'
         if self.demo:
             footer = 'Preview only - sample markers and values'
         elif not self.hotkey:
-            footer = 'F8 unavailable (in use). Minimize to hide; X stops cheats.'
-        self.label(footer, fg=MUTED, font=('Trebuchet MS', 8))
+            footer = 'F8 unavailable (in use). Minimize to hide; X stops assists.'
+        self.label(footer, fg=GOLD, font=('Trebuchet MS', 8))
 
     def refill_once(self):
         self.once = True
 
+    def refill_link_once(self):
+        self.link_once = True
+
     def callback_error(self, kind, error, traceback):
         logging.error('UI callback failed', exc_info=(kind, error, traceback))
+        self.once = self.link_once = False
         self.auto.set(False)
+        self.link_auto.set(False)
+        self.minigames.set(False)
+        self.run_speed.set(False)
+        self.roll_speed.set(False)
+        self.invisible.set(False)
+        self.jump_height.set(False)
+        self.dive_mode.set('Off')
         self.freeze_timer.set(False)
         self.status.set(f'Error; refills stopped: {error}')
         messagebox.showerror('Navi Scout', str(error), parent=self.root)
@@ -224,12 +322,12 @@ class Companion:
     def draw(self, rows, forward):
         c = self.canvas
         c.delete('all')
-        cx, cy, size = 170, 138, 101
+        cx, cy, size = 204, 119, 83
         radius = self.range.get()
         for r in (size / 2, size):
-            c.create_oval(cx-r, cy-r, cx+r, cy+r, outline='#456259', dash=(2, 4))
-        c.create_line(cx-size, cy, cx+size, cy, fill='#345048')
-        c.create_line(cx, cy-size, cx, cy+size, fill='#345048')
+            c.create_oval(cx-r, cy-r, cx+r, cy+r, outline='#705936', dash=(2, 4))
+        c.create_line(cx-size, cy, cx+size, cy, fill='#493824')
+        c.create_line(cx, cy-size, cx, cy+size, fill='#493824')
         c.create_text(cx, 12, text=f'CAMERA UP  /  {radius} m', fill=MUTED, font=('Trebuchet MS', 9))
         nx, ny = radar_offset(0, -1, forward)
         c.create_text(cx + (size + 14) * nx, cy + (size + 14) * ny, text='N', fill=GOLD,
@@ -260,7 +358,7 @@ class Companion:
             c.create_text(cx + (size - 33) * ux, cy + (size - 33) * uy,
                           text=f"{item['distance']:.0f}m{vertical}", fill=color,
                           font=('Trebuchet MS', 9, 'bold'))
-        c.create_text(12, 248, text='Gold = Skulltula     Pink = heart     ^ / v = above / below',
+        c.create_text(12, 218, text='Gold = Skulltula     Pink = heart     ^ / v = above / below',
                       fill=MUTED, anchor='w', font=('Trebuchet MS', 8))
 
     def refresh_radar(self):
@@ -321,12 +419,16 @@ class Companion:
                     raise NotReady('Waiting for NX2navi')
                 self.had_game = True
             manager, area, xyz = self.game.state()
-            selected = [name for name, var in self.enabled.items() if var.get()] if self.auto.get() or self.once else []
+            selected = [name for name, var in self.enabled.items() if var.get() and
+                        ((self.link_auto.get() or self.link_once) if name in ('health', 'magic')
+                         else (self.auto.get() or self.once))]
             resources = self.game.resources(manager, selected)
-            minigame = self.game.minigame_resources(manager, selected if self.minigames.get() else ())
+            round_ammo = [name for name, var in self.minigame_enabled.items() if var.get()] if self.minigames.get() else ()
+            minigame = self.game.minigame_resources(manager, round_ammo)
             self.minigame_text.set(f"Minigame {minigame['resource']}: {minigame['current']}/{minigame['capacity']}"
                                    if minigame else 'Minigame ammo: waiting for a round')
             self.once = False
+            self.link_once = False
             ids, flags = self.game.collections(manager, self.named)
             progress = SimpleNamespace(ids=ids, values=flags)
             active = [x for x in self.catalog if (self.skulls.get() if x['kind'] == 'skull' else self.hearts.get())]
@@ -366,6 +468,11 @@ class Companion:
                              xyz=xyz, resources=resources, minigame=minigame, timer=self.timer_state,
                              timer_freeze_enabled=self.freeze_timer.get(), found=done,
                              nearest=rows[:5], refills_enabled=self.auto.get(),
+                             link_refills_enabled=self.link_auto.get(), run_speed_2x=self.run_speed.get(),
+                             roll_speed_2x=self.roll_speed.get(),
+                             invisible_to_enemies=self.invisible.get(),
+                             jump_height_2x=self.jump_height.get(),
+                             dive_mode=self.dive_mode.get(),
                              orientation='camera-up', camera_forward=self.game.camera_direction(),
                              radar_hidden=self.hidden, hotkey_registered=self.hotkey is not None)
                 (self.data_dir / 'live-status.local.json').write_text(json.dumps(state, indent=2))
@@ -376,13 +483,110 @@ class Companion:
             self.last_near = set()
         except (OSError, ValueError) as error:
             self.auto.set(False)
+            self.link_auto.set(False)
+            self.minigames.set(False)
             self.once = False
+            self.link_once = False
             logging.exception('Helper paused')
             self.status.set(f'Paused; refills stopped: {error}')
         self.root.after(250, self.tick)
 
+    def refresh_player(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            self.game.state()
+            self.run_modifier.update(self.game, self.run_speed.get())
+            self.player_modifiers.update(self.game, self.run_speed.get(), self.jump_height.get(), self.roll_speed.get())
+            modes = [name for enabled, name in ((self.run_speed.get(), 'Run / swim 2x'),
+                                               (self.roll_speed.get(), 'Roll 2x'),
+                                               (self.jump_height.get(), 'Jump 2x')) if enabled]
+            self.movement_text.set(' / '.join(modes) if modes else 'Movement: normal')
+        except NotReady as error:
+            self.movement_text.set(f'Movement paused: {error}')
+        except (OSError, ValueError) as error:
+            self.run_speed.set(False)
+            self.roll_speed.set(False)
+            self.jump_height.set(False)
+            logging.exception('Movement controls stopped')
+            self.movement_text.set(f'Movement stopped: {error}')
+        self.root.after(100, self.refresh_player)
+
+    def refresh_diving(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            self.game.state()
+            result = self.dive_limit.update(self.game, self.dive_mode.get())
+            if result:
+                text = ('Unlimited depth' if result['mode'] == 'Unlimited'
+                        else f"Dive depth: {result['depth']:g} m (normal {result['base']:g} m)")
+            else:
+                text = ('Dive limit: normal scale depth' if self.dive_mode.get() == 'Off'
+                        else 'Ready for your next dive')
+            self.dive_text.set(text)
+        except NotReady as error:
+            self.dive_text.set(f'Dive control paused: {error}')
+        except (OSError, ValueError) as error:
+            self.dive_mode.set('Off')
+            logging.exception('Dive controls stopped')
+            self.dive_text.set(f'Dive control stopped: {error}')
+        self.root.after(25 if self.dive_mode.get() != 'Off' else 250, self.refresh_diving)
+
+    def refresh_stealth(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            self.invisible_text.set(self.enemy_stealth.update(self.game, self.invisible.get()))
+        except NotReady as error:
+            self.invisible_text.set(f'Enemy stealth: {error}')
+        except (OSError, ValueError) as error:
+            self.invisible.set(False)
+            logging.exception('Enemy stealth stopped')
+            self.invisible_text.set(f'Enemy stealth stopped: {error}')
+        self.root.after(100, self.refresh_stealth)
+
+    def retry_close(self):
+        self.close_job = None
+        self.close()
+
     def close(self):
+        if self.close_job is not None:
+            return
         self.stopped = True
+        self.closing = True
+        self.invisible.set(False)
+        if self.game and self.game.alive():
+            errors = []
+            for control in (self.run_modifier, self.player_modifiers, self.dive_limit):
+                try:
+                    control.restore(self.game)
+                except (NotReady, OSError, ValueError) as error:
+                    logging.exception('Could not restore Link settings')
+                    errors.append(str(error))
+            try:
+                self.enemy_stealth.restore(self.game)
+            except NotReady as error:
+                self.status.set(f'Finishing trainer cleanup: {error}.')
+                self.root.deiconify()
+                self.close_job = self.root.after(100, self.retry_close)
+                return
+            except (OSError, ValueError) as error:
+                logging.exception('Could not restore enemy stealth')
+                errors.append(str(error))
+            if errors:
+                self.run_speed.set(False)
+                self.roll_speed.set(False)
+                self.jump_height.set(False)
+                self.dive_mode.set('Off')
+                messagebox.showwarning('Navi Scout', f"Some Link settings could not be restored: {'; '.join(errors)}\n"
+                                       'Restart NX2navi to clear remaining overrides.', parent=self.root)
         self.save_preferences()
         if self.hotkey:
             self.hotkey.close()
