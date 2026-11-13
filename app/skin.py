@@ -23,7 +23,12 @@ def apply_style(root):
               foreground=[('readonly', TEXT)], selectbackground=[('readonly', PANEL)])
     style.configure('Scout.TNotebook', background=BG, borderwidth=1, bordercolor=FRAME)
     style.configure('Scout.TNotebook.Tab', background=PANEL, foreground=MUTED,
-                    padding=(22, 7), bordercolor=FRAME, font=('Georgia', 11))
+                    padding=(14, 7), bordercolor=FRAME, font=('Georgia', 11))
+    style.configure('Treeview', background=BG, fieldbackground=BG, foreground=TEXT,
+                    rowheight=24, bordercolor=FRAME, font=('Trebuchet MS', 9))
+    style.map('Treeview', background=[('selected', ACTIVE)], foreground=[('selected', GOLD)])
+    style.configure('Treeview.Heading', background=PANEL, foreground=GOLD,
+                    relief='flat', bordercolor=FRAME, font=('Trebuchet MS', 9, 'bold'))
     style.map('Scout.TNotebook.Tab', background=[('selected', ACTIVE)],
               foreground=[('selected', GOLD)])
     root.option_add('*TCombobox*Listbox.background', PANEL)

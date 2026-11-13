@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from settings import BUILD_ID, atomic_json, backup_profile, validate_game
 from windows_support import executable_running
 from skin import apply_style
+from catalog import CATALOG_VERSION, save_catalog
 
 
 def configure(data, force=False):
@@ -19,8 +20,12 @@ def configure(data, force=False):
         config = json.loads(config_path.read_text(encoding='utf-8'))
         game = validate_game(config['game_dir'])
         catalog = data / 'catalog.local.json'
-        if catalog.is_file() and json.loads(catalog.read_text())['game_build'] == BUILD_ID:
-            return game
+        if catalog.is_file():
+            current = json.loads(catalog.read_text())
+            if current['game_build'] == BUILD_ID:
+                if current.get('catalog_version') != CATALOG_VERSION:
+                    save_catalog(game, catalog)
+                return game
     root = tk.Tk()
     apply_style(root)
     root.title('Navi Scout - Connect your game')
@@ -66,7 +71,6 @@ def configure(data, force=False):
 
         def work():
             try:
-                from catalog import save_catalog
                 backup = backup_profile(game, data / 'backups')
                 if executable_running(game / 'ocarina.exe'):
                     raise ValueError('NX2navi started during backup. Close it and prepare again.')

@@ -8,6 +8,7 @@ from core import murmur3, read_byml
 from settings import BUILD_ID, atomic_json
 
 MAX_RESOURCE = 64 * 1024 * 1024
+CATALOG_VERSION = 2
 
 
 def archive_members(data):
@@ -84,8 +85,31 @@ class GameFiles:
         return self.decode(raw, self.dictionaries[dictionary_id] if dictionary_id else None)
 
 
+def heart_condition(row, reward_flags):
+    kind = row['Type']
+    if kind == 0:
+        return dict(actor=row['ActorHash'])
+    if kind == 1:
+        key = murmur3(str(row['ActorHash']))
+        if key not in reward_flags:
+            raise ValueError('A chest-based heart reward has no completion flag in this game.')
+        return dict(flag=reward_flags[key])
+    if kind == 2:
+        return dict(flag=murmur3(row['GameDataHashName']))
+    raise ValueError(f'Unsupported heart-piece completion type: {kind}')
+
+
 def extract_catalog(game):
-    maps = read_byml(GameFiles(Path(game) / 'romfs').load('Banc/BancBasedResource/MapParam.byml.zs'))
+    files = GameFiles(Path(game) / 'romfs')
+    maps = read_byml(files.load('Banc/BancBasedResource/MapParam.byml.zs'))
+    schema = read_byml(files.load('GameData/GameDataList.Product.110.byml.zs'))['Data']
+    reward_map = next((row for row in schema['Struct'] if row['Hash'] == 0xCE0C4DFE), None)
+    if reward_map is None:
+        raise ValueError('The game has no chest-reward completion mapping.')
+    reward_flags = {row['Hash']: row['Value'] for row in reward_map['DefaultValue']}
+    boolean_keys = {row['Hash'] for row in schema['Bool']}
+    if len(reward_flags) != len(reward_map['DefaultValue']) or not set(reward_flags.values()) <= boolean_keys:
+        raise ValueError('The game has an invalid chest-reward completion mapping.')
     catalog = []
 
     def visit(node, area, floor=None):
@@ -96,10 +120,7 @@ def extract_catalog(game):
                         item = dict(id=row['InstanceID'], area=area, xyz=row['Trans'], floor=floor,
                                     kind='skull' if key == 'CollectSign' else 'heart')
                         if item['kind'] == 'heart':
-                            if row['Type'] == 2:
-                                item['flag'] = murmur3(row['GameDataHashName'])
-                            else:
-                                item['actor'] = row['ActorHash']
+                            item.update(heart_condition(row, reward_flags))
                         catalog.append(item)
                 elif key == 'Floor':
                     for index, value in enumerate(rows):
@@ -115,7 +136,7 @@ def extract_catalog(game):
     unique = {kind: len({row['id'] for row in catalog if row['kind'] == kind}) for kind in ('skull', 'heart')}
     if unique != {'skull': 100, 'heart': 36}:
         raise ValueError(f'This game has an unexpected collectible layout: {unique}')
-    return dict(game_build=BUILD_ID, unique=unique, items=catalog)
+    return dict(game_build=BUILD_ID, catalog_version=CATALOG_VERSION, unique=unique, items=catalog)
 
 
 def save_catalog(game, destination):

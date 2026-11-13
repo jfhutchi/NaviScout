@@ -83,9 +83,9 @@ def main():
              font=('Georgia', 27, 'bold')).pack(anchor='w', padx=30, pady=(24, 5))
     tk.Label(root, text='A separate companion for your NX2navi adventure', bg='#130f0b', fg='#f5ebd1',
              font=('Trebuchet MS', 12)).pack(anchor='w', padx=30, pady=(0, 16))
-    tk.Label(root, text='Camera-relative collectible radar with edge arrows and alerts\n'
+    tk.Label(root, text='Collectible radar, signed height, age labels and area progress\n'
              'Refills for obtained supplies, existing health and magic meters\n'
-             'Run/swim, roll and jump boosts, dive depth and enemy stealth\n'
+             'Movement boosts, dive depth, enemy stealth and 2x enemy damage\n'
              'Minigame ammunition and an optional timer freeze\n\n'
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',

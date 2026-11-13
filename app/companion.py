@@ -23,9 +23,11 @@ from memory import Game, NotReady
 from player import PlayerModifiers
 from running import RunSpeed
 from stealth import EnemyStealth
+from damage import EnemyDamage
 from diving import DIVE_MODES, DiveLimit
 from timers import TimerHold
 from skin import ASSETS, BG, PANEL, TEXT, MUTED, GOLD, FRAME, Switch, ChoiceStrip, apply_style
+from tracking import AGE_FILTERS, decorate_catalog, height_text, age_text, target_caption, area_progress
 from settings import VERSION, atomic_json, user_data, validate_game
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +55,7 @@ class Companion:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.game_dir = Path(game_dir)
         self.executable = self.game_dir / "ocarina.exe"
-        self.catalog = [] if demo else json.loads((self.data_dir / 'catalog.local.json').read_text())['items']
+        self.catalog = [] if demo else decorate_catalog(json.loads((self.data_dir / 'catalog.local.json').read_text())['items'])
         self.named = {x['flag'] for x in self.catalog if x.get('flag')}
         self.game = None if demo else Game.find(self.executable)
         if launch and not self.game:
@@ -74,6 +76,9 @@ class Companion:
         self.roll_speed = tk.BooleanVar(value=False)
         self.jump_height = tk.BooleanVar(value=False)
         self.invisible = tk.BooleanVar(value=False)
+        self.damage_2x = tk.BooleanVar(value=False)
+        self.damage_text = tk.StringVar(value='Damage to enemies: normal')
+        self.enemy_damage = EnemyDamage()
         self.invisible_text = tk.StringVar(value='Enemies: normal detection')
         self.enemy_stealth = EnemyStealth()
         self.player_modifiers = PlayerModifiers()
@@ -98,6 +103,10 @@ class Companion:
         self.status = tk.StringVar(value='Load your latest save. F8 hides/shows this window.')
         self.alert = tk.StringVar(value='Collectible proximity alerts enabled')
         self.counts = tk.StringVar(value='100 Skulltulas  /  36 heart pieces')
+        self.progress_age = tk.StringVar(value='All')
+        self.progress_text = tk.StringVar(value='Load a save to see area totals')
+        self.progress_state = None
+        self.progress_signature = None
         self.resource_text = {name: tk.StringVar(value=f'{name.replace("_", " ").title()}: waiting') for name in RESOURCES}
         self.enabled = {name: tk.BooleanVar(value=True) for name in RESOURCES}
         preferences = self.data_dir / 'preferences.local.json'
@@ -136,7 +145,8 @@ class Companion:
         if demo:
             self.area.set('PREVIEW - SAMPLE DATA')
             self.counts.set('Illustrative demo / no game is attached')
-            self.alert.set('Gold arrow = nearest target beyond radar range')
+            sample_target = dict(kind='skull', dx=220, dz=-120, dy=8, distance=251, ages=['Child', 'Adult'])
+            self.alert.set(target_caption(sample_target))
             self.status.set('Demonstration only. No game memory is read or changed.')
             examples = {'rupees': 'Rupees: 500/500', 'sticks': 'Sticks: 10/10', 'seeds': 'Seeds: 50/50',
                         'nuts': 'Nuts: 20/20', 'bombs': 'Bombs: 40/40', 'bombchus': 'Bombchus: 40/40',
@@ -147,7 +157,16 @@ class Companion:
             self.freeze_timer.set(True)
             self.minigame_text.set('Sample: minigame Bombchus 10/10')
             self.timer_text.set('Sample: Diving 0:45 (FROZEN)')
-            self.draw([dict(kind='skull', dx=220, dz=-120, dy=8, distance=251)], (0, -1))
+            self.catalog = decorate_catalog([
+                dict(kind='skull', id=1, area='KokiriForest_Child', xyz=[0, 0, 0]),
+                dict(kind='skull', id=2, area='KokiriForest_Child', xyz=[0, 0, 0]),
+                dict(kind='skull', id=2, area='KokiriForest_Adult', xyz=[0, 0, 0]),
+                dict(kind='heart', id=3, area='KakarikoVillage_Adult', flag=101, xyz=[0, 0, 0]),
+                dict(kind='skull', id=4, area='SpiritTemple', xyz=[0, 0, 0]),
+            ])
+            self.progress_state = SimpleNamespace(ids={1}, values={101: 1})
+            self.refresh_progress()
+            self.draw([sample_target], (0, -1))
             return
         for var in self.preference_vars().values():
             var.trace_add('write', self.save_preferences)
@@ -157,11 +176,12 @@ class Companion:
         self.root.after(100, self.refresh_timer)
         self.root.after(100, self.refresh_player)
         self.root.after(100, self.refresh_stealth)
+        self.root.after(100, self.refresh_damage)
         self.root.after(100, self.refresh_diving)
 
     def preference_vars(self):
         return dict(auto=self.auto, link_auto=self.link_auto, run_speed=self.run_speed, roll_speed=self.roll_speed,
-                    jump_height=self.jump_height, invisible=self.invisible,
+                    jump_height=self.jump_height, invisible=self.invisible, damage_2x=self.damage_2x,
                     minigames=self.minigames, freeze_timer=self.freeze_timer,
                     dive_mode=self.dive_mode,
                     sound=self.sound, skulls=self.skulls, hearts=self.hearts,
@@ -221,8 +241,8 @@ class Companion:
                      width=5, state='readonly').pack(side='left', padx=7)
         self.controls = ttk.Notebook(self.root, style='Scout.TNotebook', height=365)
         self.controls.pack(fill='x', padx=12, pady=(5, 4))
-        items, link, games = (tk.Frame(self.controls, bg=BG) for _ in range(3))
-        for frame, title in ((items, 'Items'), (link, 'Link'), (games, 'Minigames')):
+        items, link, games, progress = (tk.Frame(self.controls, bg=BG) for _ in range(4))
+        for frame, title in ((items, 'Items'), (link, 'Link'), (games, 'Minigames'), (progress, 'Progress')):
             self.controls.add(frame, text=title)
         self.label('Owned supplies', parent=items, fg=GOLD, font=('Georgia', 12), pady=5)
         grid = tk.Frame(items, bg=BG)
@@ -247,7 +267,10 @@ class Companion:
         row.pack(fill='x', padx=9, pady=4)
         Switch(row, 'Keep meters topped up', self.link_auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
         ttk.Button(row, text='Refill once', command=self.refill_link_once).pack(side='right')
-        Switch(link, 'Run / swim speed 2x', self.run_speed).pack(fill='x', padx=9, pady=2)
+        row = tk.Frame(link, bg=BG)
+        row.pack(fill='x', padx=8, pady=2)
+        for title, var in [('Run / swim 2x', self.run_speed), ('Damage 2x', self.damage_2x)]:
+            Switch(row, title, var, width=196, compact=True).pack(side='left', padx=1)
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=8, pady=2)
         for title, var in [('Roll speed 2x', self.roll_speed), ('Jump height 2x', self.jump_height)]:
@@ -255,6 +278,7 @@ class Companion:
         Switch(link, 'Invisible to enemies', self.invisible).pack(fill='x', padx=9, pady=2)
         self.label(variable=self.invisible_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
         self.label(variable=self.movement_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
+        self.label(variable=self.damage_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=12, pady=4)
         tk.Label(row, text='Dive limit', bg=BG, fg=GOLD, font=('Georgia', 11)).pack(side='left')
@@ -267,6 +291,24 @@ class Companion:
         self.label(variable=self.minigame_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
         Switch(games, 'Freeze minigame timer', self.freeze_timer).pack(fill='x', padx=9, pady=5)
         self.label(variable=self.timer_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
+        self.label('Collected by area', parent=progress, fg=GOLD, font=('Georgia', 12), pady=5)
+        ChoiceStrip(progress, self.progress_age, AGE_FILTERS).pack(anchor='w', padx=9, pady=4)
+        self.progress_age.trace_add('write', self.refresh_progress)
+        self.label(variable=self.progress_text, parent=progress, fg=TEXT,
+                   font=('Trebuchet MS', 9), wraplength=385)
+        table = tk.Frame(progress, bg=BG)
+        table.pack(fill='both', expand=True, padx=9, pady=4)
+        self.progress_tree = ttk.Treeview(table, columns=('area', 'skull', 'heart'), show='headings', height=7)
+        for key, title, width in (('area', 'Area', 210), ('skull', 'Skulltulas', 83), ('heart', 'Hearts', 75)):
+            self.progress_tree.heading(key, text=title)
+            self.progress_tree.column(key, width=width, minwidth=55, anchor='w' if key == 'area' else 'center')
+        scroll = ttk.Scrollbar(table, orient='vertical', command=self.progress_tree.yview)
+        self.progress_tree.configure(yscrollcommand=scroll.set)
+        self.progress_tree.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+        self.label('Age means location availability. Shared locations appear in both age filters; '
+                   'the save does not record the age of past pickups. Unknown dungeon ages are not guessed.',
+                   parent=progress, fg=MUTED, font=('Trebuchet MS', 8), wraplength=385)
         self.label(variable=self.status, fg=MUTED, font=('Trebuchet MS', 8), wraplength=410, height=3)
         footer = 'F8: hide/show  |  drag title bar to move  |  X: stop trainer'
         if self.demo:
@@ -343,8 +385,7 @@ class Companion:
                 c.create_oval(x-4, y-4, x+4, y+4, fill=color, outline=TEXT)
             else:
                 c.create_polygon(x, y-6, x+5, y, x, y+6, x-5, y, fill=color, outline=TEXT)
-            vertical = '^' if item['dy'] > 3 else 'v' if item['dy'] < -3 else ''
-            c.create_text(x+7, y-8, text=f"{item['distance']:.0f}m{vertical}", fill=color,
+            c.create_text(x+7, y-8, text=f"{item['distance']:.0f}m {height_text(item['dy'], compact=True)}\n{age_text(item, compact=True)}", fill=color,
                           anchor='w', font=('Trebuchet MS', 8))
         edge = radar_edge_target(rows, radius, forward)
         if edge:
@@ -354,11 +395,11 @@ class Companion:
             base_x, base_y = cx + (size - 15) * ux, cy + (size - 15) * uy
             c.create_polygon(tip_x, tip_y, base_x - 7 * uy, base_y + 7 * ux,
                              base_x + 7 * uy, base_y - 7 * ux, fill=color, outline=TEXT, width=1)
-            vertical = '^' if item['dy'] > 3 else 'v' if item['dy'] < -3 else ''
-            c.create_text(cx + (size - 33) * ux, cy + (size - 33) * uy,
-                          text=f"{item['distance']:.0f}m{vertical}", fill=color,
+            anchor = ('e' if ux > 0 else 'w') if abs(ux) > 0.4 else ('n' if uy < 0 else 's')
+            c.create_text(cx + (size - 30) * ux, cy + (size - 30) * uy, anchor=anchor,
+                          text=f"{item['distance']:.0f}m {height_text(item['dy'], compact=True)}\n{age_text(item, compact=True)}", fill=color,
                           font=('Trebuchet MS', 9, 'bold'))
-        c.create_text(12, 218, text='Gold = Skulltula     Pink = heart     ^ / v = above / below',
+        c.create_text(12, 218, text='Gold = Skulltula   Pink = heart   Height: + up / - down',
                       fill=MUTED, anchor='w', font=('Trebuchet MS', 8))
 
     def refresh_radar(self):
@@ -431,6 +472,8 @@ class Companion:
             self.link_once = False
             ids, flags = self.game.collections(manager, self.named)
             progress = SimpleNamespace(ids=ids, values=flags)
+            self.progress_state = progress
+            self.refresh_progress()
             active = [x for x in self.catalog if (self.skulls.get() if x['kind'] == 'skull' else self.hearts.get())]
             rows = nearby(active, area, xyz, progress)
             self.area.set(area.replace('_', ' '))
@@ -451,13 +494,13 @@ class Companion:
             if near:
                 target = near[0]
                 kind = 'GOLD SKULLTULA' if target['kind'] == 'skull' else 'HEART PIECE'
-                self.alert.set(f"{kind} NEARBY - {target['distance']:.0f} m\nHeight difference: {target['dy']:+.0f} m")
+                self.alert.set(target_caption(target, near=True))
                 if keys - self.last_near and self.sound.get() and now - self.last_sound >= 4:
                     winsound.MessageBeep(winsound.MB_ICONASTERISK)
                     self.last_sound = now
                     logging.info('Proximity alert: %s in %s, %.1f m', kind, area, target['distance'])
             elif rows:
-                self.alert.set(f"Nearest missing {rows[0]['kind']}: {rows[0]['distance']:.0f} m")
+                self.alert.set(target_caption(rows[0]))
             else:
                 self.alert.set('No missing collectibles mapped in this area')
             self.last_near = keys
@@ -471,6 +514,7 @@ class Companion:
                              link_refills_enabled=self.link_auto.get(), run_speed_2x=self.run_speed.get(),
                              roll_speed_2x=self.roll_speed.get(),
                              invisible_to_enemies=self.invisible.get(),
+                             damage_to_enemies_2x=self.damage_2x.get(),
                              jump_height_2x=self.jump_height.get(),
                              dive_mode=self.dive_mode.get(),
                              orientation='camera-up', camera_forward=self.game.camera_direction(),
@@ -490,6 +534,27 @@ class Companion:
             logging.exception('Helper paused')
             self.status.set(f'Paused; refills stopped: {error}')
         self.root.after(250, self.tick)
+
+    def refresh_progress(self, *_):
+        if self.progress_state is None:
+            return
+        age = self.progress_age.get()
+        rows, totals = area_progress(self.catalog, self.progress_state, age)
+        signature = age, tuple((row['region'], row['skull'], row['heart']) for row in rows)
+        if signature == self.progress_signature:
+            return
+        self.progress_signature = signature
+        position = self.progress_tree.yview()[0]
+        for item in self.progress_tree.get_children():
+            self.progress_tree.delete(item)
+        for row in rows:
+            skull, heart = row['skull'], row['heart']
+            self.progress_tree.insert('', 'end', iid=row['region'],
+                                      values=(row['label'], f'{skull[0]}/{skull[1]}', f'{heart[0]}/{heart[1]}'))
+        self.progress_tree.yview_moveto(position)
+        skull, heart = totals['skull'], totals['heart']
+        prefix = 'Sample / ' if self.demo else ''
+        self.progress_text.set(f"{prefix}{age}: Skulltulas {skull[0]}/{skull[1]}  |  Heart pieces {heart[0]}/{heart[1]}")
 
     def refresh_player(self):
         if self.stopped:
@@ -552,6 +617,22 @@ class Companion:
             self.invisible_text.set(f'Enemy stealth stopped: {error}')
         self.root.after(100, self.refresh_stealth)
 
+    def refresh_damage(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            self.game.state()
+            self.damage_text.set(self.enemy_damage.update(self.game, self.damage_2x.get()))
+        except NotReady as error:
+            self.damage_text.set(f'Damage control: {error}')
+        except (OSError, ValueError) as error:
+            self.damage_2x.set(False)
+            logging.exception('Damage control stopped')
+            self.damage_text.set(f'Damage control stopped: {error}')
+        self.root.after(100, self.refresh_damage)
+
     def retry_close(self):
         self.close_job = None
         self.close()
@@ -562,6 +643,7 @@ class Companion:
         self.stopped = True
         self.closing = True
         self.invisible.set(False)
+        self.damage_2x.set(False)
         if self.game and self.game.alive():
             errors = []
             for control in (self.run_modifier, self.player_modifiers, self.dive_limit):
@@ -570,16 +652,20 @@ class Companion:
                 except (NotReady, OSError, ValueError) as error:
                     logging.exception('Could not restore Link settings')
                     errors.append(str(error))
-            try:
-                self.enemy_stealth.restore(self.game)
-            except NotReady as error:
-                self.status.set(f'Finishing trainer cleanup: {error}.')
+            pending = []
+            for control in (self.enemy_damage, self.enemy_stealth):
+                try:
+                    control.restore(self.game)
+                except NotReady as error:
+                    pending.append(str(error))
+                except (OSError, ValueError) as error:
+                    logging.exception('Could not restore combat controls')
+                    errors.append(str(error))
+            if pending:
+                self.status.set(f"Finishing trainer cleanup: {'; '.join(pending)}.")
                 self.root.deiconify()
                 self.close_job = self.root.after(100, self.retry_close)
                 return
-            except (OSError, ValueError) as error:
-                logging.exception('Could not restore enemy stealth')
-                errors.append(str(error))
             if errors:
                 self.run_speed.set(False)
                 self.roll_speed.set(False)

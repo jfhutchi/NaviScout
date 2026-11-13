@@ -4,6 +4,7 @@ from ctypes import wintypes as W
 import hashlib
 import struct
 
+from assembly import Assembly
 from memory import Game, K, NotReady
 from running import ModuleEntry, RunSpeed
 
@@ -12,28 +13,6 @@ SIGNATURES = ((EMITTER_RVA, 9600, '61f78ee08ac0ea0b2338fa73d8cd545185524eb1ca824
               (SETTER_RVA, 1088, 'd24ca997b95f137aebbb739d22eefe4ab975be122b01c1ece1f6fb6c796ffd59'))
 PROLOGUE = bytes.fromhex('415741564155')
 REASON = 0x4E534354
-
-
-class Assembly:
-    def __init__(self):
-        self.code, self.fixups, self.labels = bytearray(), [], {}
-
-    def emit(self, raw):
-        self.code.extend(bytes.fromhex(raw))
-
-    def address(self, opcode, address):
-        self.emit(opcode)
-        self.code.extend(struct.pack('<Q', address))
-
-    def branch(self, opcode, label):
-        self.emit(opcode)
-        self.fixups.append((len(self.code), label))
-        self.code.extend(bytes(4))
-
-    def finish(self):
-        for offset, label in self.fixups:
-            struct.pack_into('<i', self.code, offset, self.labels[label] - offset - 4)
-        return bytes(self.code)
 
 
 def stealth_stub(control, setter, trampoline):

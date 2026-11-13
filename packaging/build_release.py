@@ -64,7 +64,7 @@ def main():
     RELEASE.mkdir(parents=True, exist_ok=True)
     BUILD.mkdir(exist_ok=True)
     for name in ('radar-preview.png', 'edge-arrow-demo.png', 'connect-your-game.png',
-                 'link-controls.png', 'minigame-controls.png'):
+                 'link-controls.png', 'minigame-controls.png', 'progress-controls.png', 'installer.png'):
         if not (ROOT / 'docs/screenshots' / name).is_file():
             raise ValueError(f'Missing required release screenshot: {name}')
     run('-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir', '--name', 'NaviScout',

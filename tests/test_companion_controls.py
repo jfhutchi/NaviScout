@@ -16,15 +16,16 @@ class CompanionControlTests(unittest.TestCase):
         self.app.root.destroy()
         self.temp.cleanup()
 
-    def test_three_separate_sections(self):
+    def test_separate_assist_and_progress_sections(self):
         self.assertEqual([self.app.controls.tab(tab, 'text') for tab in self.app.controls.tabs()],
-                         ['Items', 'Link', 'Minigames'])
+                         ['Items', 'Link', 'Minigames', 'Progress'])
 
     def test_new_movement_switches_default_off(self):
         self.assertFalse(self.app.run_speed.get())
         self.assertFalse(self.app.roll_speed.get())
         self.assertFalse(self.app.invisible.get())
         self.assertFalse(self.app.jump_height.get())
+        self.assertFalse(self.app.damage_2x.get())
         self.assertEqual(self.app.dive_mode.get(), 'Off')
 
     def test_refill_buttons_are_independent(self):
@@ -43,6 +44,7 @@ class CompanionControlTests(unittest.TestCase):
         self.assertIs(preferences['run_speed'], self.app.run_speed)
         self.assertIs(preferences['roll_speed'], self.app.roll_speed)
         self.assertIs(preferences['jump_height'], self.app.jump_height)
+        self.assertIs(preferences['damage_2x'], self.app.damage_2x)
         self.assertIsNot(preferences['auto'], preferences['link_auto'])
 
     def test_legacy_refills_off_do_not_enable_round_ammo(self):
@@ -78,6 +80,18 @@ class CompanionControlTests(unittest.TestCase):
         self.assertTrue(self.app.stopped)
         self.assertFalse(self.app.invisible.get())
         self.assertIn('Resume play', self.app.status.get())
+
+    def test_damage_cleanup_failure_does_not_skip_enemy_stealth_cleanup(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        restore = Mock()
+        self.app.game = SimpleNamespace(alive=lambda: True, close=lambda: None)
+        self.app.enemy_damage = SimpleNamespace(restore=Mock(side_effect=OSError('Damage restore failed')))
+        self.app.enemy_stealth = SimpleNamespace(restore=restore)
+        with patch('companion.messagebox.showwarning'), patch.object(self.app.root, 'destroy'), \
+             self.assertLogs(level='ERROR'):
+            self.app.close()
+        restore.assert_called_once_with(self.app.game)
 
 
 if __name__ == '__main__':

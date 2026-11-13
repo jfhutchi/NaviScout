@@ -28,6 +28,11 @@ The local development helper is updated from this source; its personal settings,
 
 Published 1.1.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.1.0
 
-# Next enhancement
+# Version 1.2.0
 
-- [ ] Add an independently toggleable 2x damage-to-enemies option, verify its scope and restore behavior, then refresh the release documentation and screenshots.
+- [x] Add an independently toggleable 2x damage-to-enemies option with native ownership/cleanup tests and code-traced shared attack coverage. Live combat verification remains pending and is documented.
+- [x] Restore signed height differences on near and distant collectible guidance.
+- [x] Add game-map age availability and deduplicated per-area progress with age filters.
+- [x] Fix chest-based heart completion using the game's actor-to-boolean reward mapping; four already-collected locations in the latest save were reproduced and corrected. Hyrule Field's last nearest Scrub reward remains uncollected according to its named flag.
+- [x] Complete review, 132 tests, standalone build, installed payload verification, F8 UI verification, all README copies and seven refreshed screenshots.
+- [ ] Push the reviewed source and publish the matching 1.2.0 release.
