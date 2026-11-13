@@ -1,4 +1,4 @@
-Navi Scout 1.0.0
+Navi Scout 1.0.1
 
 The original Navi Scout source is MIT licensed. No NX2navi source, generated
 game code, game assets, save files, or derived collectible catalog is bundled.

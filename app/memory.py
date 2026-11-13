@@ -185,23 +185,25 @@ class Game:
             cap_address = self.entry(manager, cap_key, 2, 40, cap_index) + 28 if cap_key is not None else None
             value = self.unpack(target, '<i')[0]
             cap = self.unpack(cap_address, '<i')[0] if cap_address is not None else caps[0]
-            health_target = self.health_target(cap) if name == 'health' else None
-            if health_target is not None:
-                value = self.unpack(health_target, '<i')[0]
-            wanted = refill_target(name, value, cap)
             ownership = OWNERSHIP_FLAGS.get(name)
-            if ownership and not self.boolean(manager, *ownership):
-                wanted = None
+            owned = not ownership or self.boolean(manager, *ownership)
+            active_reader = (self.health_target if name == 'health' else
+                             self.magic_target if name == 'magic' and owned else None)
+            active_target = active_reader(cap) if active_reader is not None else None
+            if active_target is not None:
+                value = self.unpack(active_target, '<i')[0]
+            wanted = refill_target(name, value, cap) if owned else None
             if (name in refill and wanted is not None and value != wanted
                     and not (name == 'health' and value == 0)):
                 if self.manager() != manager or (cap_address is not None and self.unpack(cap_address, '<i')[0] != cap):
                     raise NotReady('Save changed during refill: write cancelled')
                 if ownership and not self.boolean(manager, *ownership):
                     raise NotReady(f'{name.replace("_", " ").title()} ownership changed during refill: write cancelled')
-                if health_target is not None:
-                    if self.health_target(cap) != health_target or self.unpack(health_target, '<i')[0] <= 0:
-                        raise NotReady('Player changed during health refill: write cancelled')
-                    self.write_verified(health_target, struct.pack('<i', wanted), 'active health')
+                if active_target is not None:
+                    if (active_reader(cap) != active_target
+                            or (name == 'health' and self.unpack(active_target, '<i')[0] <= 0)):
+                        raise NotReady(f'Player changed during {name} refill: write cancelled')
+                    self.write_verified(active_target, struct.pack('<i', wanted), f'active {name}')
                 raw = struct.pack('<ii', wanted, wanted)
                 self.write_verified(target, raw, name)
                 value = wanted
@@ -232,6 +234,24 @@ class Game:
                 or maximum != capacity or not 0 <= current <= maximum):
             raise NotReady('Active health binding/capacity validation failed')
         return life + 0x68
+
+    def magic_target(self, capacity):
+        # Casting reads this Player binding; each frame it republishes MP to GameData.
+        actor = self.pointer(self.pointer(self.BASE + 0x4E371D0) + 0x480)
+        if not actor or self.read(self.pointer(actor + 0x20), 7) != b'Player\0':
+            raise NotReady('Active magic player is not available')
+        component = self.pointer(self.pointer(actor + 0x270) + 0x358)
+        if self.pointer(component) != self.BASE + 0x4B4DFC0 or self.pointer(component + 0x18) != actor:
+            raise NotReady('Active magic component validation failed')
+        binding = component + 0x1B78
+        if (self.pointer(binding) != self.BASE + 0x4B633F0 or self.pointer(binding + 8) != actor
+                or self.pointer(binding + 0x20) != self.BASE + 0x4B648C8):
+            raise NotReady('Active magic binding owner validation failed')
+        maximum, current_hash, max_hash, auxiliary_hash, current = self.unpack(binding + 0x34, '<iIIIi')
+        if (current_hash != 0x76B18200 or max_hash != 0x12D63A97 or auxiliary_hash != 0x3AFA3349
+                or maximum != capacity or capacity not in (240, 480) or not 0 <= current <= maximum):
+            raise NotReady('Active magic binding/capacity validation failed')
+        return binding + 0x44
 
     def minigame_context(self, manager):
         # SetItemForMiniGame assigns these transient PlayerStatus fields; the HUD reads 969.

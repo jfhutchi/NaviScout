@@ -41,6 +41,10 @@ class Arena(Game):
     def health_target(self, capacity):
         return self.addresses[RESOURCES['health'][0]] + 28
 
+    def magic_target(self, capacity):
+        self.data.setdefault(0xF000, struct.pack('<i', 2))
+        return 0xF000
+
     def write(self, handle, address, data, size, done):
         value = ctypes.string_at(data, size)
         self.data[address] = value
@@ -300,6 +304,69 @@ class ActiveHealthTests(unittest.TestCase):
         with patch('memory.K.WriteProcessMemory', side_effect=game.write):
             result = game.resources(0x1000)
         self.assertEqual(result['health']['current'], 18)
+        self.assertEqual(game.writes, [])
+
+
+class MagicArena(MiniArena):
+    def magic_target(self, capacity):
+        return Game.magic_target(self, capacity)
+
+    def __init__(self, capacity=240):
+        super().__init__()
+        self.owned = True
+        self.data[0xC018] = struct.pack('<Q', 0x9000)
+        self.data[0xDB78] = struct.pack('<Q', Game.BASE + 0x4B633F0)
+        self.data[0xDB80] = struct.pack('<Q', 0x9000)
+        self.data[0xDB98] = struct.pack('<Q', Game.BASE + 0x4B648C8)
+        self.data[0xDBAC] = struct.pack('<iIIIi', capacity, 0x76B18200, 0x12D63A97, 0x3AFA3349, 60)
+        self.data[0xDBBC] = struct.pack('<i', 60)
+        self.data[self.addresses[RESOURCES['magic'][0]] + 28] = struct.pack('<ii', capacity, capacity)
+        self.data[self.addresses[RESOURCES['magic'][2]] + 28] = struct.pack('<i', capacity)
+
+
+class ActiveMagicTests(unittest.TestCase):
+    def test_refill_updates_casting_value_even_when_saved_meter_is_full(self):
+        for capacity in (240, 480):
+            with self.subTest(capacity=capacity):
+                game = MagicArena(capacity)
+                target = game.addresses[RESOURCES['magic'][0]] + 28
+                with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+                    result = game.resources(0x1000, ['magic'])
+                self.assertEqual(result['magic']['current'], capacity)
+                self.assertEqual(game.unpack(0xDBBC, '<i')[0], capacity)
+                self.assertEqual(game.writes, [0xDBBC, target])
+                self.assertEqual(game.data[0xDBAC][:4], struct.pack('<i', capacity))
+
+    def test_display_reads_casting_value_without_writing(self):
+        game = MagicArena()
+        with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+            result = game.resources(0x1000)
+        self.assertEqual(result['magic']['current'], 60)
+        self.assertEqual(game.writes, [])
+
+    def test_magic_binding_owner_hash_capacity_and_value_are_validated(self):
+        cases = ((0xC018, struct.pack('<Q', 0)), (0xDB78, struct.pack('<Q', 0)),
+                 (0xDB80, struct.pack('<Q', 0)), (0xDB98, struct.pack('<Q', 0)),
+                 (0xDBAC, struct.pack('<iIIIi', 480, 0x76B18200, 0x12D63A97, 0x3AFA3349, 60)),
+                 (0xDBAC, struct.pack('<iIIIi', 240, 0, 0x12D63A97, 0x3AFA3349, 60)),
+                 (0xDBAC, struct.pack('<iIIIi', 240, 0x76B18200, 0, 0x3AFA3349, 60)),
+                 (0xDBAC, struct.pack('<iIIIi', 240, 0x76B18200, 0x12D63A97, 0, 60)),
+                 (0xDBAC, struct.pack('<iIIIi', 240, 0x76B18200, 0x12D63A97, 0x3AFA3349, -1)))
+        for address, raw in cases:
+            with self.subTest(address=address, raw=raw):
+                game = MagicArena()
+                game.data[address] = raw
+                with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+                    with self.assertRaises(NotReady):
+                        game.resources(0x1000, ['magic'])
+                self.assertEqual(game.writes, [])
+
+    def test_player_change_cancels_magic_refill(self):
+        game = MagicArena()
+        with patch.object(game, 'magic_target', side_effect=[0xDBBC, 0xEBBC]), \
+                patch('memory.K.WriteProcessMemory', side_effect=game.write):
+            with self.assertRaises(NotReady):
+                game.resources(0x1000, ['magic'])
         self.assertEqual(game.writes, [])
 
 

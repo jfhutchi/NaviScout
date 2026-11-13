@@ -2,6 +2,10 @@
 
 A standalone Windows companion for **NX2navi**: camera-relative collectible guidance, optional supply refills, and minigame assists. Install it separately from the game.
 
+**[Download the latest release](https://github.com/jfhutchi/NaviScout/releases/latest)**
+
+Version **1.0.1** fixes magic refills that appeared full or flickered while spells still reported insufficient magic. The companion now reads and refills Link's live casting value together with the saved counter. The player confirmed spell casting works with the fix. Existing magic ownership and meter capacity limits still apply.
+
 **[See the illustrated preview before installing](docs/START-HERE.html)**
 
 ![Navi Scout sample radar and refill controls](docs/screenshots/radar-preview.png)
@@ -19,12 +23,14 @@ A standalone Windows companion for **NX2navi**: camera-relative collectible guid
 
 1. Download a release and extract the entire ZIP.
 2. Open **START-HERE.html** to review screenshots, features and limitations.
-3. Run **NaviScout-Setup-1.0.0.exe**, then choose **Install Navi Scout**. No Python or administrator installation is required.
+3. Run **NaviScout-Setup-1.0.1.exe**, then choose **Install Navi Scout**. No Python or administrator installation is required.
 4. Start Navi Scout. Close NX2navi once, choose your own `ocarina.exe`, and select **Prepare my game**.
 5. Setup copies and SHA-256 verifies your existing game profile, then generates your private radar catalog from your game files.
 6. Play normally. Use **F8** to hide/show the companion.
 
 The companion starts with automatic refills and timer freeze **off**. Check the supplies you want and enable **Keep topped up**, or use **Refill once**. Every setting is saved for your Windows account.
+
+To update an existing installation, close Navi Scout and run the new installer. Your game connection, settings and backups are retained. For the portable version, extract the new application into a separate folder and run it after closing the old copy.
 
 This is an unsigned community application. Review the source and release checksums before running it. No antivirus or Windows security setting needs to be disabled.
 
