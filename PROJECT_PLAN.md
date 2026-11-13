@@ -35,4 +35,6 @@ Published 1.1.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.1.0
 - [x] Add game-map age availability and deduplicated per-area progress with age filters.
 - [x] Fix chest-based heart completion using the game's actor-to-boolean reward mapping; four already-collected locations in the latest save were reproduced and corrected. Hyrule Field's last nearest Scrub reward remains uncollected according to its named flag.
 - [x] Complete review, 132 tests, standalone build, installed payload verification, F8 UI verification, all README copies and seven refreshed screenshots.
-- [ ] Push the reviewed source and publish the matching 1.2.0 release.
+- [x] Push the reviewed source and publish the matching 1.2.0 release; all six uploaded asset sizes and SHA-256 digests match the verified local artifacts.
+
+Published 1.2.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.2.0
