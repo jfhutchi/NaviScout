@@ -24,4 +24,10 @@ The local development helper is updated from this source; its personal settings,
 - [x] Refresh all six screenshots, README and guide; identify NX2navi 0.9.2 as the tested port.
 - [x] Pass 118 automated tests and code review; verify original-code and parameter restoration.
 - [x] Rebuild and verify standalone application, installer, source archive and complete share ZIP.
-- [ ] Push clean source and publish the matching GitHub release.
+- [x] Push clean source and publish the matching GitHub release.
+
+Published 1.1.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.1.0
+
+# Next enhancement
+
+- [ ] Add an independently toggleable 2x damage-to-enemies option, verify its scope and restore behavior, then refresh the release documentation and screenshots.
