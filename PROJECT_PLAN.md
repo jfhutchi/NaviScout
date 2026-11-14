@@ -46,4 +46,6 @@ Published 1.2.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.2.0
 - [x] Confirm running and jumping with the player on 0.10.1; verify swimming values and stealth activation/cleanup.
 - [x] Investigate the Scarecrow freeze: logs have no fatal stack; upstream issue #777 reports the same Forest Temple symptom and a 60 FPS workaround. The local game used Unlimited FPS; the player confirmed changing it to 60 FPS resolves the encounter on 0.10.1. The underlying engine defect has not been traced.
 - [x] Refresh README copies and all seven screenshots; complete review, 139 tests, standalone build, 1,013-file installed payload verification and installed F8/live UI verification.
-- [ ] Push source and publish the matching v1.2.1 release.
+- [x] Push source and publish the matching v1.2.1 release; all six uploaded asset sizes and SHA-256 digests match the verified local packages.
+
+Published 1.2.1: https://github.com/jfhutchi/NaviScout/releases/tag/v1.2.1
