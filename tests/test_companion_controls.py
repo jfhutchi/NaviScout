@@ -18,7 +18,15 @@ class CompanionControlTests(unittest.TestCase):
 
     def test_separate_assist_and_progress_sections(self):
         self.assertEqual([self.app.controls.tab(tab, 'text') for tab in self.app.controls.tabs()],
-                         ['Items', 'Link', 'Minigames', 'Progress'])
+                         ['Items', 'Link', 'Minigames', 'Fishing', 'Progress'])
+
+    def test_resource_controls_have_icons_and_readable_two_line_captions(self):
+        from core import RESOURCES
+        self.assertEqual(set(self.app.resource_switches), set(RESOURCES))
+        for name, switch in self.app.resource_switches.items():
+            with self.subTest(name=name):
+                self.assertIsNotNone(switch.item_icon)
+                self.assertIn('\n', self.app.resource_text[name].get())
 
     def test_new_movement_switches_default_off(self):
         self.assertFalse(self.app.run_speed.get())
@@ -38,6 +46,27 @@ class CompanionControlTests(unittest.TestCase):
         self.app.refill_once()
         self.assertFalse(self.app.link_once)
         self.assertTrue(self.app.once)
+
+    def test_echo_gem_alert_plays_the_private_wav(self):
+        from unittest.mock import patch
+        self.app.echo_sound = Path(self.temp.name) / 'media/echo-gem-near.wav'
+        self.app.alert_sound.set('Echo Gem')
+        with patch('companion.winsound.PlaySound') as play, patch('companion.winsound.MessageBeep') as beep:
+            self.app.play_alert()
+        play.assert_called_once()
+        self.assertEqual(play.call_args.args[0], str(self.app.echo_sound))
+        beep.assert_not_called()
+
+    def test_audio_device_failure_does_not_stop_assists(self):
+        from unittest.mock import patch
+        self.app.auto.set(True)
+        self.app.echo_sound = Path(self.temp.name) / 'media/echo-gem-near.wav'
+        with patch('companion.winsound.PlaySound', side_effect=RuntimeError('No audio device')), \
+             patch('companion.winsound.MessageBeep', side_effect=RuntimeError('No audio device')), \
+             self.assertLogs(level='WARNING'):
+            self.app.play_alert()
+        self.assertTrue(self.app.auto.get())
+        self.assertIn('unavailable', self.app.audio_notice)
 
     def test_new_controls_are_persisted_separately(self):
         preferences = self.app.preference_vars()
@@ -105,6 +134,38 @@ class CompanionControlTests(unittest.TestCase):
         self.assertFalse(self.app.epona_speed.get())
         self.assertTrue(self.app.run_speed.get())
         self.assertTrue(self.app.jump_height.get())
+
+    def test_refill_readiness_failure_does_not_clear_collectible_radar(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from memory import NotReady
+        self.app.sound.set(False)
+        self.app.next_record = float('inf')
+        for failing in ('resources', 'minigame_resources'):
+            with self.subTest(failing=failing):
+                self.app.game = SimpleNamespace(
+                    alive=lambda: True, state=lambda: (0x1000, 'KokiriForest_Child', (1, 0, 0)),
+                    resources=Mock(return_value={}), minigame_resources=Mock(return_value=None),
+                    collections=lambda *_: (set(), {101: 0}), camera_direction=lambda: (0, -1))
+                getattr(self.app.game, failing).side_effect = NotReady('Temporary magic or rental state')
+                self.app.tick()
+                self.assertEqual(len(self.app.last_rows), 2)
+                self.assertTrue(all(row['kind'] == 'skull' for row in self.app.last_rows))
+                self.assertNotIn('Waiting for active gameplay', self.app.alert.get())
+                self.assertIn('Temporary magic or rental state', self.app.status.get())
+
+    def test_scene_transition_still_clears_radar_and_prevents_refills(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from memory import NotReady
+        resources = Mock()
+        self.app.game = SimpleNamespace(alive=lambda: True,
+                                        state=Mock(side_effect=NotReady('Scene transition')),
+                                        resources=resources)
+        self.app.last_rows = [dict(kind='skull')]
+        self.app.tick()
+        self.assertEqual(self.app.last_rows, [])
+        resources.assert_not_called()
 
     def test_close_restores_epona_even_if_other_cleanup_fails(self):
         from types import SimpleNamespace

@@ -2,6 +2,7 @@
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
+from item_icons import ItemIcon
 
 BG, PANEL, TEXT, MUTED = '#130f0b', '#261d14', '#f5ebd1', '#b3a084'
 GOLD, FRAME, ACTIVE = '#edc261', '#6a5030', '#5c4221'
@@ -23,7 +24,7 @@ def apply_style(root):
               foreground=[('readonly', TEXT)], selectbackground=[('readonly', PANEL)])
     style.configure('Scout.TNotebook', background=BG, borderwidth=1, bordercolor=FRAME)
     style.configure('Scout.TNotebook.Tab', background=PANEL, foreground=MUTED,
-                    padding=(14, 7), bordercolor=FRAME, font=('Georgia', 11))
+                    padding=(9, 7), bordercolor=FRAME, font=('Georgia', 10))
     style.configure('Treeview', background=BG, fieldbackground=BG, foreground=TEXT,
                     rowheight=24, bordercolor=FRAME, font=('Trebuchet MS', 9))
     style.map('Treeview', background=[('selected', ACTIVE)], foreground=[('selected', GOLD)])
@@ -39,21 +40,26 @@ def apply_style(root):
 
 
 class Switch(tk.Frame):
-    def __init__(self, parent, text, variable, textvariable=None, width=None, compact=False):
+    def __init__(self, parent, text, variable, textvariable=None, width=None, compact=False, icon=None):
         super().__init__(parent, bg=PANEL, highlightthickness=1, highlightbackground=FRAME, padx=6, pady=2)
         self.variable = variable
+        self.item_icon = ItemIcon(self, icon) if icon else None
+        if self.item_icon is not None:
+            self.item_icon.pack(side='left', padx=(0, 5))
         self.label = tk.Label(self, text=text, textvariable=textvariable, bg=PANEL, fg=TEXT,
-                              anchor='w', font=('Trebuchet MS', 9 if compact else 10))
+                              anchor='w', justify='left', font=('Trebuchet MS', 8 if icon else 9 if compact else 10))
         self.label.pack(side='left', fill='x', expand=True, padx=(0, 6))
         self.track = tk.Canvas(self, width=48, height=22, bg=PANEL, highlightthickness=1,
                                highlightbackground=PANEL, highlightcolor=GOLD, takefocus=1,
                                cursor='hand2')
         self.track.pack(side='right')
         if width:
-            self.configure(width=width, height=32)
+            self.configure(width=width, height=44 if icon else 32)
             self.pack_propagate(False)
         for target in (self, self.label, self.track):
             target.bind('<Button-1>', self.invoke)
+        if self.item_icon is not None:
+            self.item_icon.bind('<Button-1>', self.invoke)
         self.track.bind('<space>', self.invoke)
         self.track.bind('<Return>', self.invoke)
         self.trace = variable.trace_add('write', self.draw)

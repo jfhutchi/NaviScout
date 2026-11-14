@@ -16,7 +16,7 @@ from tkinter import messagebox, ttk
 
 from install_support import extract_payload, install, install_dir, remove_installed
 from settings import BUILD_ID, VERSION, atomic_json
-from skin import Switch, apply_style
+from skin import ASSETS, Switch, apply_style
 
 HERE = Path(__file__).resolve().parent
 
@@ -79,14 +79,19 @@ def main():
                              creationflags=subprocess.CREATE_NO_WINDOW)
         root.destroy()
         return
-    tk.Label(root, text='NAVI SCOUT', bg='#130f0b', fg='#edc261',
-             font=('Georgia', 27, 'bold')).pack(anchor='w', padx=30, pady=(24, 5))
+    header = tk.Frame(root, bg='#130f0b')
+    header.pack(fill='x', padx=30, pady=(20, 5))
+    tk.Label(header, text='NAVI SCOUT', bg='#130f0b', fg='#edc261',
+             font=('Georgia', 27, 'bold')).pack(side='left')
+    artwork = tk.PhotoImage(file=str(ASSETS / 'naviscout.png'))
+    root.installer_art = artwork.subsample(max(1, artwork.width() // 64))
+    tk.Label(header, image=root.installer_art, bg='#130f0b').pack(side='right')
     tk.Label(root, text='A separate companion for your NX2navi adventure', bg='#130f0b', fg='#f5ebd1',
              font=('Trebuchet MS', 12)).pack(anchor='w', padx=30, pady=(0, 16))
     tk.Label(root, text='Collectible radar, signed height, age labels and area progress\n'
              'Refills for obtained supplies, existing health and magic meters\n'
              'Link and Epona speed boosts, dive depth, stealth and 2x enemy damage\n'
-             'Minigame ammunition and an optional timer freeze\n\n'
+             'Fishing assists, minigame ammunition and an optional timer freeze\n\n'
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',
              bg='#130f0b', fg='#b3a084', justify='left', font=('Trebuchet MS', 10)).pack(anchor='w', padx=30)

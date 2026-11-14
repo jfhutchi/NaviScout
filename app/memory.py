@@ -261,11 +261,11 @@ class Game:
         if (self.pointer(binding) != self.BASE + 0x4B633F0 or self.pointer(binding + 8) != actor
                 or self.pointer(binding + 0x20) != self.BASE + 0x4B648C8):
             raise NotReady('Active magic binding owner validation failed')
-        maximum, current_hash, max_hash, auxiliary_hash, current = self.unpack(binding + 0x34, '<iIIIi')
-        # A freshly loaded Player can leave the bound maximum cache at zero.
-        # GameData's validated owned meter remains the limit used for every refill.
+        _, current_hash, max_hash, auxiliary_hash, current = self.unpack(binding + 0x34, '<iIIIi')
+        # +0x34 retains a magic-message payload, not a maximum. The binding reads
+        # its real limit through max_hash; resources() validates that GameData cap.
         if (current_hash != 0x76B18200 or max_hash != 0x12D63A97 or auxiliary_hash != 0x3AFA3349
-                or maximum not in (0, capacity) or capacity not in (240, 480) or not 0 <= current <= capacity):
+                or capacity not in (240, 480) or not 0 <= current <= capacity):
             raise NotReady('Active magic binding/capacity validation failed')
         return binding + 0x44
 

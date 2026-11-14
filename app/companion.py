@@ -27,6 +27,8 @@ from stealth import EnemyStealth
 from damage import EnemyDamage
 from diving import DIVE_MODES, DiveLimit
 from timers import TimerHold
+from alert_audio import prepare_echo_sound
+from fishing import FISHING_OPTIONS, FishingAssists
 from skin import ASSETS, BG, PANEL, TEXT, MUTED, GOLD, FRAME, Switch, ChoiceStrip, apply_style
 from tracking import AGE_FILTERS, decorate_catalog, height_text, age_text, target_caption, area_progress
 from settings import VERSION, atomic_json, user_data, validate_game
@@ -98,7 +100,13 @@ class Companion:
         self.timer_text = tk.StringVar(value='Timer: waiting for a timed minigame')
         self.timer_hold = TimerHold()
         self.timer_state = None
+        self.fishing_enabled = {name: tk.BooleanVar(value=False) for name, _ in FISHING_OPTIONS}
+        self.fishing_text = tk.StringVar(value='Fishing assists: Off. Start a fishing session at the pond.')
+        self.fishing_assists = FishingAssists()
         self.sound = tk.BooleanVar(value=True)
+        self.alert_sound = tk.StringVar(value='Echo Gem')
+        self.echo_sound = None
+        self.audio_notice = ''
         self.skulls = tk.BooleanVar(value=True)
         self.hearts = tk.BooleanVar(value=True)
         self.range = tk.IntVar(value=100)
@@ -111,7 +119,7 @@ class Companion:
         self.progress_text = tk.StringVar(value='Load a save to see area totals')
         self.progress_state = None
         self.progress_signature = None
-        self.resource_text = {name: tk.StringVar(value=f'{name.replace("_", " ").title()}: waiting') for name in RESOURCES}
+        self.resource_text = {name: tk.StringVar(value=f'{name.replace("_", " ").title()}\nWaiting') for name in RESOURCES}
         self.enabled = {name: tk.BooleanVar(value=True) for name in RESOURCES}
         preferences = self.data_dir / 'preferences.local.json'
         if preferences.exists() and not demo:
@@ -127,7 +135,18 @@ class Companion:
                         raise ValueError('Invalid alert radius')
                     if key == 'dive_mode' and value not in DIVE_MODES:
                         raise ValueError('Invalid dive limit preference')
+                    if key == 'alert_sound' and value not in ('Echo Gem', 'System beep'):
+                        raise ValueError('Invalid alert sound preference')
                     var.set(value)
+        if not demo:
+            try:
+                self.echo_sound = prepare_echo_sound(self.game_dir, self.data_dir)
+            except (OSError, ValueError) as error:
+                logging.warning('Echo Gem sound preparation failed: %s', error)
+                self.audio_notice = f'Echo Gem sound unavailable: {error}'
+            if self.echo_sound is None:
+                self.audio_notice = self.audio_notice or 'Echo Gem sound unavailable; using System beep.'
+                self.alert_sound.set('System beep')
         self.last_near = set()
         self.last_sound = 0.0
         self.next_attach = 0.0
@@ -157,7 +176,7 @@ class Companion:
                         'arrows': 'Arrows: locked', 'magic_beans': 'Magic Beans: 10/10',
                         'scrub_seeds': 'Scrub Seeds: 30/30', 'health': 'Health: 7/7 hearts', 'magic': 'Magic: 100%'}
             for name, var in self.resource_text.items():
-                var.set(examples[name])
+                var.set(examples[name].replace(': ', '\n', 1))
             self.freeze_timer.set(True)
             self.minigame_text.set('Sample: minigame Bombchus 10/10')
             self.timer_text.set('Sample: Diving 0:45 (FROZEN)')
@@ -183,6 +202,7 @@ class Companion:
         self.root.after(100, self.refresh_stealth)
         self.root.after(100, self.refresh_damage)
         self.root.after(100, self.refresh_diving)
+        self.root.after(100, self.refresh_fishing)
 
     def preference_vars(self):
         return dict(auto=self.auto, link_auto=self.link_auto, run_speed=self.run_speed, roll_speed=self.roll_speed,
@@ -190,9 +210,10 @@ class Companion:
                     invisible=self.invisible, damage_2x=self.damage_2x,
                     minigames=self.minigames, freeze_timer=self.freeze_timer,
                     dive_mode=self.dive_mode,
-                    sound=self.sound, skulls=self.skulls, hearts=self.hearts,
+                    sound=self.sound, alert_sound=self.alert_sound, skulls=self.skulls, hearts=self.hearts,
                     range=self.range, alert_radius=self.alert_radius,
                     **{f'refill_{name}': var for name, var in self.enabled.items()},
+                    **{f'fishing_{name}': var for name, var in self.fishing_enabled.items()},
                     **{f'minigame_refill_{name}': var for name, var in self.minigame_enabled.items()})
 
     def save_preferences(self, *_):
@@ -242,13 +263,16 @@ class Companion:
         tk.Label(row, text='Radar m', bg=BG, fg=MUTED).pack(side='left')
         ttk.Combobox(row, textvariable=self.range, values=(40, 60, 100, 200, 500),
                      width=5, state='readonly').pack(side='left', padx=7)
-        tk.Label(row, text='Alert m', bg=BG, fg=MUTED).pack(side='left', padx=(24, 0))
+        tk.Label(row, text='Alert m', bg=BG, fg=MUTED).pack(side='left', padx=(8, 0))
         ttk.Combobox(row, textvariable=self.alert_radius, values=(10, 15, 25, 40, 60),
                      width=5, state='readonly').pack(side='left', padx=7)
+        ttk.Combobox(row, textvariable=self.alert_sound, values=('Echo Gem', 'System beep'),
+                     width=10, state='readonly').pack(side='right')
         self.controls = ttk.Notebook(self.root, style='Scout.TNotebook', height=365)
         self.controls.pack(fill='x', padx=12, pady=(5, 4))
-        items, link_page, games, progress = (tk.Frame(self.controls, bg=BG) for _ in range(4))
-        for frame, title in ((items, 'Items'), (link_page, 'Link'), (games, 'Minigames'), (progress, 'Progress')):
+        items, link_page, games, fishing, progress = (tk.Frame(self.controls, bg=BG) for _ in range(5))
+        for frame, title in ((items, 'Items'), (link_page, 'Link'), (games, 'Minigames'),
+                             (fishing, 'Fishing'), (progress, 'Progress')):
             self.controls.add(frame, text=title)
         self.link_canvas = tk.Canvas(link_page, bg=BG, highlightthickness=0, yscrollincrement=18)
         link_scroll = ttk.Scrollbar(link_page, orient='vertical', command=self.link_canvas.yview)
@@ -259,15 +283,18 @@ class Companion:
         link_window = self.link_canvas.create_window(0, 0, window=link, anchor='nw')
         link.bind('<Configure>', lambda _: self.link_canvas.configure(scrollregion=self.link_canvas.bbox('all')))
         self.link_canvas.bind('<Configure>', lambda event: self.link_canvas.itemconfigure(link_window, width=event.width))
-        self.label('Owned supplies', parent=items, fg=GOLD, font=('Georgia', 12), pady=5)
+        self.resource_switches = {}
+        self.label('Owned supplies', parent=items, fg=GOLD, font=('Georgia', 12), pady=2)
         grid = tk.Frame(items, bg=BG)
         grid.pack(fill='x', padx=8)
         supplies = [name for name in RESOURCES if name not in ('health', 'magic')]
         for i, name in enumerate(supplies):
-            Switch(grid, '', self.enabled[name], textvariable=self.resource_text[name],
-                   width=196, compact=True).grid(row=i // 2, column=i % 2, padx=1, pady=2)
+            switch = Switch(grid, '', self.enabled[name], textvariable=self.resource_text[name],
+                            width=196, compact=True, icon=name)
+            switch.grid(row=i // 2, column=i % 2, padx=1, pady=1)
+            self.resource_switches[name] = switch
         row = tk.Frame(items, bg=BG)
-        row.pack(fill='x', padx=9, pady=9)
+        row.pack(fill='x', padx=9, pady=5)
         Switch(row, 'Keep topped up', self.auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
         ttk.Button(row, text='Refill once', command=self.refill_once).pack(side='right')
         self.label('Unobtained items remain locked. Caps follow your bags and wallet.',
@@ -276,8 +303,10 @@ class Companion:
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=8)
         for name in ('health', 'magic'):
-            Switch(row, '', self.enabled[name], textvariable=self.resource_text[name],
-                   width=184, compact=True).pack(side='left', padx=1)
+            switch = Switch(row, '', self.enabled[name], textvariable=self.resource_text[name],
+                            width=184, compact=True, icon=name)
+            switch.pack(side='left', padx=1)
+            self.resource_switches[name] = switch
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=9, pady=4)
         Switch(row, 'Keep meters topped up', self.link_auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
@@ -312,10 +341,17 @@ class Companion:
         self.label('Minigame assists', parent=games, fg=GOLD, font=('Georgia', 12), pady=6)
         Switch(games, 'Keep round ammo topped up', self.minigames).pack(fill='x', padx=9, pady=4)
         for name, var in self.minigame_enabled.items():
-            Switch(games, name.title(), var).pack(fill='x', padx=9, pady=2)
+            Switch(games, name.title(), var, icon=name).pack(fill='x', padx=9, pady=2)
         self.label(variable=self.minigame_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
         Switch(games, 'Freeze minigame timer', self.freeze_timer).pack(fill='x', padx=9, pady=5)
         self.label(variable=self.timer_text, parent=games, fg=MUTED, font=('Trebuchet MS', 9))
+        self.label('At the fishing pond', parent=fishing, fg=GOLD, font=('Georgia', 12), pady=6)
+        for name, title in FISHING_OPTIONS:
+            Switch(fishing, title, self.fishing_enabled[name]).pack(fill='x', padx=9, pady=4)
+        self.label(variable=self.fishing_text, parent=fishing, fg=GOLD, font=('Trebuchet MS', 9), wraplength=380)
+        self.label('Settings restore on Off or close. Stamina changes affect later cycles; the current '
+                   'cycle finishes normally. Catching and rewards follow the game.',
+                   parent=fishing, fg=MUTED, font=('Trebuchet MS', 9), wraplength=380)
         self.label('Collected by area', parent=progress, fg=GOLD, font=('Georgia', 12), pady=5)
         ChoiceStrip(progress, self.progress_age, AGE_FILTERS).pack(anchor='w', padx=9, pady=4)
         self.progress_age.trace_add('write', self.refresh_progress)
@@ -348,6 +384,23 @@ class Companion:
     def refill_link_once(self):
         self.link_once = True
 
+    def play_alert(self):
+        if self.alert_sound.get() == 'Echo Gem' and self.echo_sound is not None:
+            try:
+                winsound.PlaySound(str(self.echo_sound), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                return
+            except RuntimeError as error:
+                logging.warning('Echo Gem playback failed: %s', error)
+                self.audio_notice = 'Echo Gem playback unavailable; using System beep.'
+                self.alert_sound.set('System beep')
+        elif self.alert_sound.get() == 'Echo Gem':
+            self.audio_notice = 'Echo Gem sound unavailable; using System beep.'
+        try:
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except RuntimeError as error:
+            logging.warning('Alert sound unavailable: %s', error)
+            self.audio_notice = f'Alert sound unavailable: {error}'
+
     def callback_error(self, kind, error, traceback):
         logging.error('UI callback failed', exc_info=(kind, error, traceback))
         self.once = self.link_once = False
@@ -361,6 +414,8 @@ class Companion:
         self.epona_speed.set(False)
         self.dive_mode.set('Off')
         self.freeze_timer.set(False)
+        for value in self.fishing_enabled.values():
+            value.set(False)
         self.status.set(f'Error; refills stopped: {error}')
         messagebox.showerror('Navi Scout', str(error), parent=self.root)
 
@@ -466,6 +521,24 @@ class Companion:
             self.timer_text.set(f'Timer freeze stopped: {error}')
         self.root.after(25 if self.freeze_timer.get() else 250, self.refresh_timer)
 
+    def refresh_fishing(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            options = {name: value.get() for name, value in self.fishing_enabled.items()}
+            self.fishing_text.set(self.fishing_assists.update(self.game, options))
+        except NotReady as error:
+            self.fishing_text.set(str(error))
+        except (OSError, ValueError) as error:
+            for value in self.fishing_enabled.values():
+                value.set(False)
+            logging.exception('Fishing assists stopped')
+            self.fishing_text.set(f'Fishing assists stopped: {error}')
+        self.root.after(25 if any(value.get() for value in self.fishing_enabled.values()) else 250,
+                        self.refresh_fishing)
+
     def tick(self):
         if self.stopped:
             return
@@ -489,13 +562,23 @@ class Companion:
             selected = [name for name, var in self.enabled.items() if var.get() and
                         ((self.link_auto.get() or self.link_once) if name in ('health', 'magic')
                          else (self.auto.get() or self.once))]
-            resources = self.game.resources(manager, selected)
+            refill_errors = []
+            try:
+                resources = self.game.resources(manager, selected)
+            except NotReady as error:
+                resources = {}
+                refill_errors.append(f'Refills waiting: {error}')
+            else:
+                self.once = False
+                self.link_once = False
             round_ammo = [name for name, var in self.minigame_enabled.items() if var.get()] if self.minigames.get() else ()
-            minigame = self.game.minigame_resources(manager, round_ammo)
+            try:
+                minigame = self.game.minigame_resources(manager, round_ammo)
+            except NotReady as error:
+                minigame = None
+                refill_errors.append(f'Round ammo waiting: {error}')
             self.minigame_text.set(f"Minigame {minigame['resource']}: {minigame['current']}/{minigame['capacity']}"
                                    if minigame else 'Minigame ammo: waiting for a round')
-            self.once = False
-            self.link_once = False
             ids, flags = self.game.collections(manager, self.named)
             progress = SimpleNamespace(ids=ids, values=flags)
             self.progress_state = progress
@@ -508,11 +591,11 @@ class Companion:
             self.counts.set(f"Found {done['skull']}/100 skulls   |   {done['heart']}/36 heart locations")
             for name, row in resources.items():
                 title = name.replace('_', ' ').title()
-                label = f"{title}: {row['current']}/{row['capacity']}" if row['unlocked'] else f'{title}: locked'
+                label = f"{title}\n{row['current']}/{row['capacity']}" if row['unlocked'] else f'{title}\nLocked'
                 if row['unlocked'] and name == 'health':
-                    label = f"Health: {row['current'] / 4:g}/{row['capacity'] / 4:g} hearts"
+                    label = f"Health\n{row['current'] / 4:g}/{row['capacity'] / 4:g} hearts"
                 elif row['unlocked'] and name == 'magic':
-                    label = f"Magic: {row['current'] * 100 / row['capacity']:.0f}%"
+                    label = f"Magic\n{row['current'] * 100 / row['capacity']:.0f}%"
                 self.resource_text[name].set(label)
             self.last_rows = rows
             near = [x for x in rows if x['distance'] <= self.alert_radius.get()]
@@ -522,7 +605,7 @@ class Companion:
                 kind = 'GOLD SKULLTULA' if target['kind'] == 'skull' else 'HEART PIECE'
                 self.alert.set(target_caption(target, near=True))
                 if keys - self.last_near and self.sound.get() and now - self.last_sound >= 4:
-                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                    self.play_alert()
                     self.last_sound = now
                     logging.info('Proximity alert: %s in %s, %.1f m', kind, area, target['distance'])
             elif rows:
@@ -530,12 +613,15 @@ class Companion:
             else:
                 self.alert.set('No missing collectibles mapped in this area')
             self.last_near = keys
-            self.status.set('Live collection tracking. Refill caps follow upgrades.\nA nearby marker may require night-time, equipment or another floor.')
+            self.status.set('Radar active. ' + ' | '.join(refill_errors) if refill_errors else
+                            'Live collection tracking. Refill caps follow upgrades.\nA nearby marker may require night-time, equipment or another floor.')
+            if self.audio_notice:
+                self.status.set(self.status.get() + '\n' + self.audio_notice)
             if now >= self.next_record:
                 self.next_record = now + 3
                 state = dict(utc=datetime.now(timezone.utc).isoformat(), pid=self.game.pid, area=area,
                              xyz=xyz, resources=resources, minigame=minigame, timer=self.timer_state,
-                             timer_freeze_enabled=self.freeze_timer.get(), found=done,
+                             timer_freeze_enabled=self.freeze_timer.get(), found=done, refill_errors=refill_errors,
                              nearest=rows[:5], refills_enabled=self.auto.get(),
                              link_refills_enabled=self.link_auto.get(), run_speed_2x=self.run_speed.get(),
                              roll_speed_2x=self.roll_speed.get(),
@@ -543,6 +629,9 @@ class Companion:
                              damage_to_enemies_2x=self.damage_2x.get(),
                              jump_height_2x=self.jump_height.get(),
                              dive_mode=self.dive_mode.get(),
+                             alert_sound=self.alert_sound.get(), echo_sound_available=self.echo_sound is not None,
+                             fishing_assists={name: value.get() for name, value in self.fishing_enabled.items()},
+                             fishing_status=self.fishing_text.get(),
                              orientation='camera-up', camera_forward=self.game.camera_direction(),
                              radar_hidden=self.hidden, hotkey_registered=self.hotkey is not None)
                 (self.data_dir / 'live-status.local.json').write_text(json.dumps(state, indent=2))
@@ -704,11 +793,12 @@ class Companion:
         self.damage_2x.set(False)
         if self.game and self.game.alive():
             errors = []
-            for control in (self.run_modifier, self.player_modifiers, self.dive_limit, self.horse_speed):
+            for control in (self.run_modifier, self.player_modifiers, self.dive_limit, self.horse_speed,
+                            self.fishing_assists):
                 try:
                     control.restore(self.game)
                 except (NotReady, OSError, ValueError) as error:
-                    logging.exception('Could not restore Link settings')
+                    logging.exception('Could not restore trainer settings')
                     errors.append(str(error))
             pending = []
             for control in (self.enemy_damage, self.enemy_stealth):
@@ -729,8 +819,10 @@ class Companion:
                 self.roll_speed.set(False)
                 self.jump_height.set(False)
                 self.epona_speed.set(False)
+                for value in self.fishing_enabled.values():
+                    value.set(False)
                 self.dive_mode.set('Off')
-                messagebox.showwarning('Navi Scout', f"Some Link settings could not be restored: {'; '.join(errors)}\n"
+                messagebox.showwarning('Navi Scout', f"Some trainer settings could not be restored: {'; '.join(errors)}\n"
                                        'Restart NX2navi to clear remaining overrides.', parent=self.root)
         self.save_preferences()
         if self.hotkey:

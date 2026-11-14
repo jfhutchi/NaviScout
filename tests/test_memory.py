@@ -325,13 +325,27 @@ class MagicArena(MiniArena):
 
 
 class ActiveMagicTests(unittest.TestCase):
-    def test_loaded_save_can_have_an_uninitialized_capacity_cache(self):
+    def test_zero_pending_command_value_does_not_prevent_refill(self):
         game = MagicArena()
         game.data[0xDBAC] = struct.pack('<iIIIi', 0, 0x76B18200, 0x12D63A97, 0x3AFA3349, 60)
         with patch('memory.K.WriteProcessMemory', side_effect=game.write):
             result = game.resources(0x1000, ['magic'])
         self.assertEqual(result['magic']['current'], 240)
         self.assertEqual(game.data[0xDBAC][:4], bytes(4))
+
+    def test_magic_command_payload_is_not_treated_as_meter_capacity(self):
+        for payload in (-1, 60, 180, 480, 999999):
+            with self.subTest(payload=payload):
+                game = MagicArena()
+                game.data[0xDBAC] = struct.pack('<iIIIi', payload, 0x76B18200, 0x12D63A97, 0x3AFA3349, 42)
+                game.data[0xDBBC] = struct.pack('<i', 42)
+                header = game.data[0xDBAC][:16]
+                with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+                    result = game.resources(0x1000, ['magic'])
+                self.assertEqual(result['magic']['current'], 240)
+                self.assertEqual(game.unpack(0xDBBC, '<i')[0], 240)
+                self.assertEqual(game.data[0xDBAC][:16], header)
+                self.assertNotIn(0xDBAC, game.writes)
 
     def test_refill_updates_casting_value_even_when_saved_meter_is_full(self):
         for capacity in (240, 480):
@@ -352,10 +366,9 @@ class ActiveMagicTests(unittest.TestCase):
         self.assertEqual(result['magic']['current'], 60)
         self.assertEqual(game.writes, [])
 
-    def test_magic_binding_owner_hash_capacity_and_value_are_validated(self):
+    def test_magic_binding_owner_hash_and_value_are_validated(self):
         cases = ((0xC018, struct.pack('<Q', 0)), (0xDB78, struct.pack('<Q', 0)),
                  (0xDB80, struct.pack('<Q', 0)), (0xDB98, struct.pack('<Q', 0)),
-                 (0xDBAC, struct.pack('<iIIIi', 480, 0x76B18200, 0x12D63A97, 0x3AFA3349, 60)),
                  (0xDBAC, struct.pack('<iIIIi', 240, 0, 0x12D63A97, 0x3AFA3349, 60)),
                  (0xDBAC, struct.pack('<iIIIi', 240, 0x76B18200, 0, 0x3AFA3349, 60)),
                  (0xDBAC, struct.pack('<iIIIi', 240, 0x76B18200, 0x12D63A97, 0, 60)),
@@ -368,6 +381,15 @@ class ActiveMagicTests(unittest.TestCase):
                     with self.assertRaises(NotReady):
                         game.resources(0x1000, ['magic'])
                 self.assertEqual(game.writes, [])
+
+    def test_unsupported_saved_magic_capacity_is_rejected(self):
+        game = MagicArena()
+        capacity = game.addresses[RESOURCES['magic'][2]] + 28
+        game.data[capacity] = struct.pack('<i', 960)
+        with patch('memory.K.WriteProcessMemory', side_effect=game.write):
+            with self.assertRaises(NotReady):
+                game.resources(0x1000, ['magic'])
+        self.assertEqual(game.writes, [])
 
     def test_player_change_cancels_magic_refill(self):
         game = MagicArena()
