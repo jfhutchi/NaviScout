@@ -38,3 +38,12 @@ Published 1.1.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.1.0
 - [x] Push the reviewed source and publish the matching 1.2.0 release; all six uploaded asset sizes and SHA-256 digests match the verified local artifacts.
 
 Published 1.2.0: https://github.com/jfhutchi/NaviScout/releases/tag/v1.2.0
+
+# Version 1.2.1
+
+- [x] Add verified native run/swim and stealth layouts for NX2navi 0.10.1 while retaining the 0.9.2 reference layouts.
+- [x] Keep jump and roll available when normal-running validation fails; add regression tests.
+- [x] Confirm running and jumping with the player on 0.10.1; verify swimming values and stealth activation/cleanup.
+- [x] Investigate the Scarecrow freeze: logs have no fatal stack; upstream issue #777 reports the same Forest Temple symptom and a 60 FPS workaround. The local game used Unlimited FPS; the player confirmed changing it to 60 FPS resolves the encounter on 0.10.1. The underlying engine defect has not been traced.
+- [x] Refresh README copies and all seven screenshots; complete review, 139 tests, standalone build, 1,013-file installed payload verification and installed F8/live UI verification.
+- [ ] Push source and publish the matching v1.2.1 release.

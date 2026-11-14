@@ -90,7 +90,7 @@ def main():
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',
              bg='#130f0b', fg='#b3a084', justify='left', font=('Trebuchet MS', 10)).pack(anchor='w', padx=30)
-    tk.Label(root, text=f'Tested on NX2navi 0.9.2 | Windows x64\nGame build {BUILD_ID}',
+    tk.Label(root, text=f'Tested on NX2navi 0.9.2 / 0.10.1 | Windows x64\nGame build {BUILD_ID}',
              bg='#130f0b', fg='#edc261', font=('Trebuchet MS', 10, 'bold')).pack(anchor='w', padx=30, pady=15)
     desktop = tk.BooleanVar(value=True)
     Switch(root, 'Create a Desktop shortcut', desktop).pack(fill='x', padx=30)

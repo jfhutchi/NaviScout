@@ -1,4 +1,5 @@
 import ctypes as C
+import hashlib
 import struct
 import unittest
 from contextlib import nullcontext
@@ -6,10 +7,36 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from memory import K
-from stealth import EnemyStealth, ModuleEntry, PROLOGUE, EMITTER_RVA, stealth_stub
+from stealth import EnemyStealth, ModuleEntry, PROLOGUE, EMITTER_RVA, StealthLayout, stealth_stub, select_stealth_layout
 
 
 class StealthStubTests(unittest.TestCase):
+    def test_interrupted_new_layout_cleanup_checks_its_selected_entry(self):
+        from stealth import STEALTH_LAYOUTS
+        from unittest.mock import Mock
+        control = EnemyStealth()
+        control.base, control.allocation = 0x1000, 0x9000
+        control.layout = STEALTH_LAYOUTS[1]
+        entry = control.base + control.layout.emitter_rva
+        read = Mock(return_value=PROLOGUE)
+        game = SimpleNamespace(read=read, handle=123)
+        control.owner = game
+        with patch.object(control.guard, 'paused', return_value=nullcontext()), \
+             patch.object(K, 'VirtualFreeEx', return_value=1):
+            control.restore(game)
+        read.assert_called_once_with(entry, 6)
+
+    def test_layout_selection_checks_both_native_functions(self):
+        data = {0x1100: b'emitter', 0x1200: b'setter'}
+        signatures = tuple((address - 0x1000, len(raw), hashlib.sha256(raw).hexdigest()) for address, raw in data.items())
+        layout = StealthLayout(0x100, 0x200, signatures)
+        game = SimpleNamespace(read=lambda address, _size: data[address])
+        with patch('stealth.STEALTH_LAYOUTS', (layout,)):
+            self.assertIs(select_stealth_layout(game, 0x1000, 0x1000), layout)
+            data[0x1200] = b'changed'
+            with self.assertRaises(ValueError):
+                select_stealth_layout(game, 0x1000, 0x1000)
+
     def test_off_without_an_override_never_touches_game_memory(self):
         EnemyStealth().restore(None)
 
@@ -23,7 +50,7 @@ class StealthStubTests(unittest.TestCase):
 
                 def module(_, pointer):
                     item = C.cast(pointer, C.POINTER(ModuleEntry)).contents
-                    item.base, item.image_size = base, 0x100000
+                    item.base, item.image_size = base, 0x10000000
                     return 1
 
                 def write(address, raw, _):
@@ -40,7 +67,7 @@ class StealthStubTests(unittest.TestCase):
                                        unpack=lambda address, fmt: struct.unpack(fmt, read(address, struct.calcsize(fmt))))
                 control = EnemyStealth()
                 control.context = (0x2000, 0x3000, 0x4000)
-                with patch('stealth.SIGNATURES', ()), \
+                with patch('stealth.STEALTH_LAYOUTS', (StealthLayout(EMITTER_RVA, 0x4132E0, ()),)), \
                      patch.object(K, 'CreateToolhelp32Snapshot', return_value=50), \
                      patch.object(K, 'Module32FirstW', side_effect=module), \
                      patch.object(K, 'CloseHandle', return_value=1), \

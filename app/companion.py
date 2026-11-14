@@ -219,7 +219,7 @@ class Companion:
         title.pack(side='left', pady=7)
         tk.Label(title, text='Navi Scout', bg=PANEL, fg=GOLD,
                  font=('Georgia', 23, 'bold')).pack(anchor='w')
-        tk.Label(title, text='RADAR  /  TRAINER', bg=PANEL, fg=MUTED,
+        tk.Label(title, text=f'RADAR  /  TRAINER  v{VERSION}', bg=PANEL, fg=MUTED,
                  font=('Trebuchet MS', 8)).pack(anchor='w')
         self.label(variable=self.area, font=('Georgia', 11, 'bold'))
         self.label(variable=self.counts, fg=MUTED, font=('Trebuchet MS', 9))
@@ -563,12 +563,29 @@ class Companion:
             if not self.game or not self.game.alive():
                 raise NotReady('Waiting for NX2navi')
             self.game.state()
-            self.run_modifier.update(self.game, self.run_speed.get())
-            self.player_modifiers.update(self.game, self.run_speed.get(), self.jump_height.get(), self.roll_speed.get())
+            notes = []
+            try:
+                self.run_modifier.update(self.game, self.run_speed.get())
+            except NotReady as error:
+                notes.append(f'Run waiting: {error}')
+            except (OSError, ValueError):
+                self.run_speed.set(False)
+                logging.exception('Running control stopped')
+                notes.append('Run unavailable; jump / roll remain available')
+            try:
+                self.player_modifiers.update(self.game, self.run_speed.get(), self.jump_height.get(), self.roll_speed.get())
+            except NotReady as error:
+                notes.append(f'Parameters waiting: {error}')
+            except (OSError, ValueError):
+                self.run_speed.set(False)
+                self.roll_speed.set(False)
+                self.jump_height.set(False)
+                logging.exception('Movement parameters stopped')
+                notes.append('Movement parameter validation failed; see log')
             modes = [name for enabled, name in ((self.run_speed.get(), 'Run / swim 2x'),
                                                (self.roll_speed.get(), 'Roll 2x'),
                                                (self.jump_height.get(), 'Jump 2x')) if enabled]
-            self.movement_text.set(' / '.join(modes) if modes else 'Movement: normal')
+            self.movement_text.set(' / '.join(modes + notes) if modes or notes else 'Movement: normal')
         except NotReady as error:
             self.movement_text.set(f'Movement paused: {error}')
         except (OSError, ValueError) as error:

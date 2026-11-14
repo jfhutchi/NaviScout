@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import ctypes as C
 from ctypes import wintypes as W
+from dataclasses import dataclass
 import hashlib
 import struct
 
@@ -14,6 +15,44 @@ FUNCTION_RVA, FUNCTION_SIZE = 0x2682A30, 17568
 FUNCTION_SHA256 = 'be3dc1415110fac323cd5d43804eb3b2cdb6923816d4c585fbf96b68425db2f5'
 CALL_RVA, VELOCITY_RVA = 0x26860A1, 0x264F8E0
 ORIGINAL_CALL = bytes.fromhex('e83a98fcff')
+
+
+@dataclass(frozen=True)
+class RunLayout:
+    function_rva: int
+    function_size: int
+    function_sha256: str
+    call_rva: int
+    velocity_rva: int
+    original_call: bytes
+    helper_size: int = 0
+    helper_sha256: str | None = None
+
+
+RUN_LAYOUTS = (
+    RunLayout(FUNCTION_RVA, FUNCTION_SIZE, FUNCTION_SHA256, CALL_RVA, VELOCITY_RVA, ORIGINAL_CALL),
+    RunLayout(0x253A590, 16826, '4cf47e3e87e5e6bd0b010e9490697bc2afab640c33afabb3e5c60ea4714624c6',
+              0x253D968, 0x2509610, bytes.fromhex('e8a3bcfcff'), 5918,
+              'f99123c7425b3375013430dd4db436d33182befcae30011b4ba0684aaf71ea7b'),
+)
+
+
+def select_layout(game, base, image_size):
+    for layout in RUN_LAYOUTS:
+        if (layout.function_rva + layout.function_size > image_size
+                or layout.call_rva + 5 > image_size
+                or layout.velocity_rva + max(1, layout.helper_size) > image_size):
+            continue
+        if hashlib.sha256(game.read(base + layout.function_rva, layout.function_size)).hexdigest() != layout.function_sha256:
+            continue
+        if game.read(base + layout.call_rva, 5) != layout.original_call:
+            continue
+        if layout.helper_sha256 is not None:
+            helper = game.read(base + layout.velocity_rva, layout.helper_size)
+            if hashlib.sha256(helper).hexdigest() != layout.helper_sha256:
+                continue
+        return layout
+    raise ValueError('Normal-running code is not recognized by this Navi Scout build; a verified compatibility layout is needed')
 
 
 class ModuleEntry(C.Structure):
@@ -61,6 +100,7 @@ class RunSpeed:
         self.base = self.stub = None
         self.replacement = None
         self.owner = None
+        self.layout = RUN_LAYOUTS[0]
 
     @contextmanager
     def paused(self, game, ranges):
@@ -146,8 +186,8 @@ class RunSpeed:
             self.restore(game)
             return
         if self.stub:
-            current = game.read(self.base + CALL_RVA, 5)
-            if current == ORIGINAL_CALL:
+            current = game.read(self.base + self.layout.call_rva, 5)
+            if current == self.layout.original_call:
                 self.restore(game)
                 return self.update(game, enabled)
             if current != self.replacement:
@@ -164,12 +204,8 @@ class RunSpeed:
             self.base = module.base
         finally:
             K.CloseHandle(snapshot)
-        current = game.read(self.base + FUNCTION_RVA, FUNCTION_SIZE)
-        if hashlib.sha256(current).hexdigest() != FUNCTION_SHA256:
-            raise ValueError('Run / swim 2x needs the supported NX2navi 0.9.2 Windows build; code signature differs')
-        address = self.base + CALL_RVA
-        if game.read(address, 5) != ORIGINAL_CALL:
-            raise NotReady('Normal-running call validation failed')
+        self.layout = select_layout(game, self.base, module.image_size)
+        address = self.base + self.layout.call_rva
         # Allocate beyond the module, within the x64 relative-call range.
         start = (self.base + module.image_size + 65535) & ~65535
         for index in range(256):
@@ -183,14 +219,14 @@ class RunSpeed:
             raise OSError('Could not allocate the temporary running-speed helper')
         self.owner = game
         self.replacement = relative_call(address, self.stub)
-        game.write_verified(self.stub, run_stub(self.base + VELOCITY_RVA), 'Temporary running helper')
+        game.write_verified(self.stub, run_stub(self.base + self.layout.velocity_rva), 'Temporary running helper')
         old = W.DWORD()
         if not K.VirtualProtectEx(game.handle, self.stub, 4096, 0x20, C.byref(old)):
             raise C.WinError(C.get_last_error())
         if not K.FlushInstructionCache(game.handle, self.stub, 4096):
             raise C.WinError(C.get_last_error())
         with self.paused(game, [(address, address + 5)]):
-            self.code_write(game, address, ORIGINAL_CALL, self.replacement)
+            self.code_write(game, address, self.layout.original_call, self.replacement)
 
     def restore(self, game):
         if not self.stub:
@@ -200,12 +236,12 @@ class RunSpeed:
                 raise NotReady('Cannot restore running controls through another game process')
             self.base = self.stub = self.replacement = self.owner = None
             return
-        address = self.base + CALL_RVA
+        address = self.base + self.layout.call_rva
         with self.paused(game, [(address, address + 5), (self.stub, self.stub + 4096)]):
             current = game.read(address, 5)
             if current == self.replacement:
-                self.code_write(game, address, self.replacement, ORIGINAL_CALL)
-            elif current != ORIGINAL_CALL:
+                self.code_write(game, address, self.replacement, self.layout.original_call)
+            elif current != self.layout.original_call:
                 raise NotReady('Running code changed outside Navi Scout; restore cancelled')
             if not K.VirtualFreeEx(game.handle, self.stub, 0, 0x8000):
                 raise C.WinError(C.get_last_error())

@@ -41,7 +41,7 @@ def configure(data, force=False):
              'Close NX2navi once for setup so its profile can be backed up safely.\n'
              'Your radar catalog is generated locally; no game files are downloaded.',
              justify='left', bg='#130f0b', fg='#f5ebd1', font=('Trebuchet MS', 10)).pack(anchor='w', padx=24)
-    tk.Label(root, text=f'Tested on NX2navi 0.9.2  |  Build {BUILD_ID}  |  Windows x64',
+    tk.Label(root, text=f'Tested on NX2navi 0.9.2 / 0.10.1  |  Build {BUILD_ID}',
              bg='#130f0b', fg='#b3a084', font=('Trebuchet MS', 9)).pack(anchor='w', padx=24, pady=12)
     row = tk.Frame(root, bg='#130f0b')
     row.pack(fill='x', padx=24)

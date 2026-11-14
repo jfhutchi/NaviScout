@@ -119,7 +119,7 @@ class EnemyDamage:
             K.CloseHandle(snapshot)
         self.base = module.base
         if hashlib.sha256(game.read(self.base + FUNCTION_RVA, FUNCTION_SIZE)).hexdigest() != FUNCTION_SHA256:
-            raise ValueError('Damage 2x needs the supported NX2navi 0.9.2 Windows code signature')
+            raise ValueError('Damage-processing code is not recognized by this Navi Scout build; a verified compatibility layout is needed')
         entry = self.base + FUNCTION_RVA
         start = (self.base + module.image_size + 65535) & ~65535
         for index in range(256):

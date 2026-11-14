@@ -1,13 +1,43 @@
 import ctypes as C
+import hashlib
 import struct
 import unittest
 from unittest.mock import patch
 
 from memory import K, NotReady
-from running import CALL_RVA, ORIGINAL_CALL, RunSpeed, ThreadEntry, relative_call, run_stub
+from running import CALL_RVA, ORIGINAL_CALL, RunSpeed, RunLayout, ThreadEntry, relative_call, run_stub, select_layout
 
 
 class RunSpeedTests(unittest.TestCase):
+    def test_layout_selection_validates_callback_call_and_velocity_helper(self):
+        from types import SimpleNamespace
+        base = 0x100000
+        call = relative_call(base + 0x108, base + 0x400)
+        function = bytes(8) + call + bytes(3)
+        helper = b'verified velocity helper'
+        layout = RunLayout(0x100, len(function), hashlib.sha256(function).hexdigest(),
+                           0x108, 0x400, call, len(helper), hashlib.sha256(helper).hexdigest())
+        old = RunLayout(0x200, 16, 'unrecognized', 0x208, 0x300, b'other')
+        data = {base + 0x100: function, base + 0x108: call, base + 0x400: helper}
+        game = SimpleNamespace(read=lambda address, size: data.get(address, bytes(size)))
+        with patch('running.RUN_LAYOUTS', (old, layout)):
+            self.assertIs(select_layout(game, base, 0x1000), layout)
+            data[base + 0x400] = b'changed velocity helper!'
+            with self.assertRaises(ValueError):
+                select_layout(game, base, 0x1000)
+            data[base + 0x400] = helper
+            data[base + 0x108] = b'other'
+            with self.assertRaises(ValueError):
+                select_layout(game, base, 0x1000)
+
+    def test_layout_selection_never_reads_beyond_module_bounds(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        read = Mock()
+        with self.assertRaises(ValueError):
+            select_layout(SimpleNamespace(read=read), 0x1000, 1)
+        read.assert_not_called()
+
     def test_relative_call_reaches_its_target_and_rejects_overflow(self):
         for target in (0x2000, 0x7000):
             instruction = relative_call(0x4000, target)
@@ -142,6 +172,20 @@ class RunSpeedTests(unittest.TestCase):
             control.restore(game)
         self.assertEqual(calls, [(0x1000 + CALL_RVA, b'12345', ORIGINAL_CALL), 'free'])
         self.assertIsNone(control.stub)
+
+    def test_restore_uses_the_installed_layout_after_a_port_update(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from running import RUN_LAYOUTS
+        control = RunSpeed()
+        control.base, control.stub, control.replacement = 0x1000, 0x9000, b'12345'
+        control.layout = RUN_LAYOUTS[1]
+        game = SimpleNamespace(read=lambda *_: b'12345', handle=123)
+        control.owner = game
+        with patch.object(control, 'paused', return_value=nullcontext()), \
+             patch.object(control, 'code_write') as write, patch.object(K, 'VirtualFreeEx', return_value=1):
+            control.restore(game)
+        write.assert_called_once_with(game, 0x1000 + control.layout.call_rva, b'12345', control.layout.original_call)
 
 
 if __name__ == '__main__':

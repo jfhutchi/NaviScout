@@ -11,8 +11,8 @@ class CompanionControlTests(unittest.TestCase):
         self.app = Companion(Path(self.temp.name), Path(self.temp.name), demo=True)
 
     def tearDown(self):
-        if self.app.close_job is not None:
-            self.app.root.after_cancel(self.app.close_job)
+        for job in self.app.root.tk.call('after', 'info'):
+            self.app.root.after_cancel(job)
         self.app.root.destroy()
         self.temp.cleanup()
 
@@ -46,6 +46,36 @@ class CompanionControlTests(unittest.TestCase):
         self.assertIs(preferences['jump_height'], self.app.jump_height)
         self.assertIs(preferences['damage_2x'], self.app.damage_2x)
         self.assertIsNot(preferences['auto'], preferences['link_auto'])
+
+    def test_run_signature_failure_does_not_disable_jump_or_roll(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.app.game = SimpleNamespace(alive=lambda: True, state=lambda: None)
+        self.app.run_modifier = SimpleNamespace(update=Mock(side_effect=ValueError('Unrecognized running code')))
+        update = Mock()
+        self.app.player_modifiers = SimpleNamespace(update=update)
+        self.app.run_speed.set(True)
+        self.app.jump_height.set(True)
+        self.app.roll_speed.set(True)
+        with self.assertLogs(level='ERROR'):
+            self.app.refresh_player()
+        self.assertFalse(self.app.run_speed.get())
+        self.assertTrue(self.app.jump_height.get())
+        self.assertTrue(self.app.roll_speed.get())
+        update.assert_called_once_with(self.app.game, False, True, True)
+
+    def test_busy_running_update_does_not_delay_jump_or_roll(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from memory import NotReady
+        self.app.game = SimpleNamespace(alive=lambda: True, state=lambda: None)
+        self.app.run_modifier = SimpleNamespace(update=Mock(side_effect=NotReady('Running callback busy')))
+        update = Mock()
+        self.app.player_modifiers = SimpleNamespace(update=update)
+        self.app.jump_height.set(True)
+        self.app.refresh_player()
+        self.assertTrue(self.app.jump_height.get())
+        update.assert_called_once_with(self.app.game, False, True, False)
 
     def test_legacy_refills_off_do_not_enable_round_ammo(self):
         settings = migrate_preferences(dict(auto=False, minigames=True, refill_arrows=False))

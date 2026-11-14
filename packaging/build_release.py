@@ -101,7 +101,7 @@ def main():
     with zipfile.ZipFile(RELEASE / f'NaviScout-Source-{VERSION}.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for path in source_files():
             archive.write(path, 'NaviScout-source/' + path.relative_to(ROOT).as_posix())
-    report = dict(version=VERSION, tested_nx2navi_version='0.9.2', built_utc=datetime.now(timezone.utc).isoformat(), platform='Windows x64',
+    report = dict(version=VERSION, tested_nx2navi_versions=['0.9.2', '0.10.1'], built_utc=datetime.now(timezone.utc).isoformat(), platform='Windows x64',
                   python=sys.version.split()[0], pyinstaller=importlib.metadata.version('pyinstaller'),
                   zstandard=importlib.metadata.version('zstandard'), payload_files=len(manifest['files']),
                   source_files=len(source_files()), personal_game_data_included=False,

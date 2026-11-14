@@ -1,6 +1,7 @@
 """Apply an independently owned perception-disable reason on the game thread."""
 import ctypes as C
 from ctypes import wintypes as W
+from dataclasses import dataclass
 import hashlib
 import struct
 
@@ -13,6 +14,31 @@ SIGNATURES = ((EMITTER_RVA, 9600, '61f78ee08ac0ea0b2338fa73d8cd545185524eb1ca824
               (SETTER_RVA, 1088, 'd24ca997b95f137aebbb739d22eefe4ab975be122b01c1ece1f6fb6c796ffd59'))
 PROLOGUE = bytes.fromhex('415741564155')
 REASON = 0x4E534354
+
+
+@dataclass(frozen=True)
+class StealthLayout:
+    emitter_rva: int
+    setter_rva: int
+    signatures: tuple
+
+
+STEALTH_LAYOUTS = (
+    StealthLayout(EMITTER_RVA, SETTER_RVA, SIGNATURES),
+    StealthLayout(0xB443F70, 0x3F6D70,
+                  ((0xB443F70, 9235, 'cb411d965bce843573d7ca92116673e7ff272f26f94def62856f5acdc195fe77'),
+                   (0x3F6D70, 1073, 'bf41b6382fba637646cbf0f72c1db5301740fbb1ce311d218bb40dc310eac8f6'))),
+)
+
+
+def select_stealth_layout(game, base, image_size):
+    for layout in STEALTH_LAYOUTS:
+        if any(rva + size > image_size for rva, size, _ in layout.signatures):
+            continue
+        if all(hashlib.sha256(game.read(base + rva, size)).hexdigest() == expected
+               for rva, size, expected in layout.signatures):
+            return layout
+    raise ValueError('Enemy-perception code is not recognized by this Navi Scout build; a verified compatibility layout is needed')
 
 
 def stealth_stub(control, setter, trampoline):
@@ -97,6 +123,7 @@ class EnemyStealth:
         self.installed = False
         self.initialized = False
         self.guard = RunSpeed()
+        self.layout = STEALTH_LAYOUTS[0]
 
     def install(self, game):
         snapshot = K.CreateToolhelp32Snapshot(0x18, game.pid)
@@ -110,10 +137,8 @@ class EnemyStealth:
         finally:
             K.CloseHandle(snapshot)
         self.base = module.base
-        for rva, size, expected in SIGNATURES:
-            if hashlib.sha256(game.read(self.base + rva, size)).hexdigest() != expected:
-                raise ValueError('Enemy stealth needs the supported NX2navi 0.9.2 Windows code signature')
-        entry = self.base + EMITTER_RVA
+        self.layout = select_stealth_layout(game, self.base, module.image_size)
+        entry = self.base + self.layout.emitter_rva
         start = (self.base + module.image_size + 65535) & ~65535
         for index in range(256):
             candidate = start + index * 65536
@@ -127,7 +152,7 @@ class EnemyStealth:
         self.owner = game
         self.control = self.allocation + 4096
         trampoline = self.allocation + 2048
-        code = stealth_stub(self.control, self.base + SETTER_RVA, trampoline)
+        code = stealth_stub(self.control, self.base + self.layout.setter_rva, trampoline)
         if len(code) >= 2048:
             raise ValueError('Enemy-stealth helper exceeds its reserved code area')
         game.write_verified(self.allocation, code, 'Enemy stealth helper')
@@ -192,7 +217,7 @@ class EnemyStealth:
                 raise NotReady('Cannot restore enemy stealth through another game process')
             self.__init__()
             return
-        entry = self.base + EMITTER_RVA
+        entry = self.base + self.layout.emitter_rva
         if not self.initialized:
             with self.guard.paused(game, [(entry, entry + 6), (self.allocation, self.allocation + 4096)]):
                 if game.read(entry, 6) != PROLOGUE:

@@ -4,7 +4,9 @@ A standalone Windows companion for **NX2navi**: camera-relative collectible guid
 
 **[Download the latest release](https://github.com/jfhutchi/NaviScout/releases/latest)**
 
-Version **1.2.0** restores signed height guidance, adds Child/Adult availability labels and a **Progress** tab with collected totals by area, and fixes chest-based heart rewards remaining on the radar after collection. Existing private catalogs update automatically from the recipient's own game files. The **Link** tab also adds an independent **Damage 2x** switch for Link-owned attacks against enemies. The in-game-menu-inspired design, Navi/Triforce icon, refills, movement, stealth and dive controls remain available. **Tested on NX2navi 0.9.2**; the new damage control has automated native-helper and code-trace coverage, with live combat verification still pending.
+Version **1.2.1** adds verified native run/swim and enemy-stealth layouts for **NX2navi 0.10.1**, selected automatically alongside the earlier 0.9.2 reference layouts. A running-code rejection no longer switches off jump or roll. The player confirmed running and jumping on 0.10.1; native run activation, doubled swimming values and stealth activation/cleanup were verified.
+
+The 1.2 series restores signed height guidance, adds Child/Adult availability labels and a **Progress** tab with collected totals by area, and fixes chest-based heart rewards remaining on the radar after collection. Existing private catalogs update automatically from the recipient's own game files. The **Link** tab also adds an independent **Damage 2x** switch for Link-owned attacks against enemies. The in-game-menu-inspired design, Navi/Triforce icon, refills, movement, stealth and dive controls remain available. **Tested on NX2navi 0.9.2 and 0.10.1**; the new damage control has automated native-helper and code-trace coverage, with live combat verification still pending.
 
 **[See the illustrated preview before installing](docs/START-HERE.html)**
 
@@ -15,8 +17,8 @@ Version **1.2.0** restores signed height guidance, adds Child/Adult availability
 ## Compatibility
 
 - Windows 10/11, x64. Tested on the development PC; a separate clean-PC test is still recommended.
-- NX2navi game executable `ocarina.exe`, with extracted game build **E0F3CCFAF50065AE** (tested with NX2navi 0.9.2).
-- Run/swim, damage and enemy stealth additionally require their tested 0.9.2 Windows code signatures. Rebuilt or different port executables can fail these checks; the affected option stops with an explanation instead of patching unrecognized code.
+- NX2navi game executable `ocarina.exe`, with extracted game build **E0F3CCFAF50065AE** (tested with NX2navi 0.9.2 and 0.10.1).
+- Native run/swim and enemy stealth select verified code layouts automatically, including the 0.9.2 reference build and the tested 0.10.1 rebuild. Damage uses its verified shared hit-processing layout. Compatibility is checked against actual code, not a version-label gate. Another rebuild may still require a new validated layout; an unrecognized running callback leaves jump and roll available.
 - Other game builds, Hookshot, Lichii and emulators are not supported by this release.
 - You provide your own installed game. No ROM, game executable, game assets, save or collectible catalog is distributed.
 
@@ -24,7 +26,7 @@ Version **1.2.0** restores signed height guidance, adds Child/Adult availability
 
 1. Download a release and extract the entire ZIP.
 2. Open **START-HERE.html** to review screenshots, features and limitations.
-3. Run **NaviScout-Setup-1.2.0.exe**, then choose **Install Navi Scout**. No Python or administrator installation is required.
+3. Run **NaviScout-Setup-1.2.1.exe**, then choose **Install Navi Scout**. No Python or administrator installation is required.
 4. Start Navi Scout. Close NX2navi once, choose your own `ocarina.exe`, and select **Prepare my game**.
 5. Setup copies and SHA-256 verifies your existing game profile, then generates your private radar catalog from your game files.
 6. Play normally. Use **F8** to hide/show the companion.
@@ -87,9 +89,13 @@ Magic Beans cap at 10 and Scrub seeds at 30. Bombchus require ownership and use 
 - Running uses a checked temporary override at normal movement's translation callback. It leaves turning speed and other action callbacks alone. Swimming doubles the owned player's existing normal, heavy, dash and heavy-dash speed settings, retaining the original values and inheritance flags for restoration. It does not change vertical dive speed or dive depth.
 - Enemy stealth uses the game's own perception/sensor setter with a separate Navi Scout disable reason. It preserves other script/cutscene reasons and waits rather than evicting them if the reason list is full. Off removes only Navi Scout's reason. If closing while paused requires cleanup, the trainer stays open and asks you to resume play briefly before it finishes closing. Forced termination requires restarting NX2navi to clear remaining live overrides.
 - Closing the helper stops all cheats. Hiding with F8 does not stop them. Loading/transition states pause writes, and unsupported data layouts are rejected.
-- The current release passes 132 automated tests, including native-helper CPU-state preservation, thread-resume and interrupted-install failure paths, perception-list capacity guards, exact parameter restoration, chest-reward completion, age/progress deduplication and separate control preferences. Damage-helper tests execute the native filter for direct and creator-owned attacks, rejecting stale links, cycles, non-enemies, player targets and unsafe values. Its common damage stage was traced across nine native call paths; live combat and individual weapon coverage remain unverified. The player confirmed running, swimming, rolling, jumping and both dive modes work. Enemy stealth On/Off was confirmed in a live encounter; owned-reason removal, original-code restoration and temporary-memory release were also verified. Not every enemy or movement situation has been exhaustively tested.
+- The current release passes 139 automated tests, including native-helper CPU-state preservation, thread-resume and interrupted-install failure paths, perception-list capacity guards, exact parameter restoration, chest-reward completion, age/progress deduplication and separate control preferences. Damage-helper tests execute the native filter for direct and creator-owned attacks, rejecting stale links, cycles, non-enemies, player targets and unsafe values. Its common damage stage was traced across nine native call paths; live combat and individual weapon coverage remain unverified. The player confirmed running, swimming, rolling, jumping and both dive modes work. Enemy stealth On/Off was confirmed in a live encounter; owned-reason removal, original-code restoration and temporary-memory release were also verified. Not every enemy or movement situation has been exhaustively tested.
 - Bombchu bowling refills and a retained health refill were observed during live play. The user confirmed the diving timer hold worked. Other minigame modes have code-trace and automated coverage, but have not all been tested in live rounds.
 - The release includes a machine-readable verification report for automated, extraction and packaging checks. A different PC's driver/security environment may behave differently.
+
+## Scarecrow Song on NX2navi
+
+An upstream report describes Scarecrow Song playback stopping after its first note in the Forest Temple while background animations continue. A commenter reports that setting the game frame limit to **60 FPS** lets playback proceed; limits above 60 can trigger the problem. See [NX2navi issue #777](https://github.com/tangerineturtle1/NX2navi/issues/777#issuecomment-6842911792). The player confirmed that the 60 FPS cap resolves the same Forest Temple stall on NX2navi 0.10.1. This confirms the workaround for that encounter; the underlying engine defect has not been traced. Navi Scout does not change the game frame limit.
 
 ## Your data and removal
 
