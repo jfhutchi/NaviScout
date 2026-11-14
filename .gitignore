@@ -7,3 +7,9 @@ __pycache__/
 *.local.json
 *.log
 .build-tools/
+
+# Keep local AI instructions and project notes out of the public repository.
+PROJECT_PLAN.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
