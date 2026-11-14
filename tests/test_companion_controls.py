@@ -26,6 +26,7 @@ class CompanionControlTests(unittest.TestCase):
         self.assertFalse(self.app.invisible.get())
         self.assertFalse(self.app.jump_height.get())
         self.assertFalse(self.app.damage_2x.get())
+        self.assertFalse(self.app.epona_speed.get())
         self.assertEqual(self.app.dive_mode.get(), 'Off')
 
     def test_refill_buttons_are_independent(self):
@@ -45,7 +46,21 @@ class CompanionControlTests(unittest.TestCase):
         self.assertIs(preferences['roll_speed'], self.app.roll_speed)
         self.assertIs(preferences['jump_height'], self.app.jump_height)
         self.assertIs(preferences['damage_2x'], self.app.damage_2x)
+        self.assertIs(preferences['epona_speed'], self.app.epona_speed)
         self.assertIsNot(preferences['auto'], preferences['link_auto'])
+
+    def test_link_controls_can_scroll_to_the_dive_options(self):
+        self.app.controls.select(1)
+        self.app.root.update()
+        self.assertTrue(hasattr(self.app, 'link_canvas'), 'Overflowing Link controls need a scrollbar')
+        canvas = self.app.link_canvas
+        canvas.yview_moveto(1)
+        self.app.root.update()
+        label = next(widget for widget in self.app.link_body.winfo_children()
+                     if 'textvariable' in widget.keys() and str(widget.cget('textvariable')) == str(self.app.dive_text))
+        self.assertGreaterEqual(label.winfo_rooty(), canvas.winfo_rooty())
+        self.assertLessEqual(label.winfo_rooty() + label.winfo_height(),
+                             canvas.winfo_rooty() + canvas.winfo_height())
 
     def test_run_signature_failure_does_not_disable_jump_or_roll(self):
         from types import SimpleNamespace
@@ -76,6 +91,32 @@ class CompanionControlTests(unittest.TestCase):
         self.app.refresh_player()
         self.assertTrue(self.app.jump_height.get())
         update.assert_called_once_with(self.app.game, False, True, False)
+
+    def test_epona_failure_does_not_disable_links_movement(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.app.game = SimpleNamespace(alive=lambda: True)
+        self.app.horse_speed = SimpleNamespace(update=Mock(side_effect=ValueError('Invalid horse speeds')))
+        self.app.epona_speed.set(True)
+        self.app.run_speed.set(True)
+        self.app.jump_height.set(True)
+        with self.assertLogs(level='ERROR'):
+            self.app.refresh_horse()
+        self.assertFalse(self.app.epona_speed.get())
+        self.assertTrue(self.app.run_speed.get())
+        self.assertTrue(self.app.jump_height.get())
+
+    def test_close_restores_epona_even_if_other_cleanup_fails(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        restore = Mock()
+        self.app.game = SimpleNamespace(alive=lambda: True, close=lambda: None)
+        self.app.run_modifier = SimpleNamespace(restore=Mock(side_effect=OSError('Run restore failed')))
+        self.app.horse_speed = SimpleNamespace(restore=restore)
+        with patch('companion.messagebox.showwarning'), patch.object(self.app.root, 'destroy'), \
+             self.assertLogs(level='ERROR'):
+            self.app.close()
+        restore.assert_called_once_with(self.app.game)
 
     def test_legacy_refills_off_do_not_enable_round_ammo(self):
         settings = migrate_preferences(dict(auto=False, minigames=True, refill_arrows=False))

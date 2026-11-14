@@ -50,6 +50,10 @@ class StaleParameter(NotReady):
     """A cached parameter resource was freed or replaced; never write through it."""
 
 
+class ChangedHorsePower(StaleParameter):
+    """Horse gear speeds are being refreshed; wait for a new riding session."""
+
+
 class Game:
     BASE = 0x7000000000
 
@@ -292,6 +296,84 @@ class Game:
         if self.pointer(parameter) != self.BASE + 0x4B6D1A8:
             raise NotReady('Link movement parameter type is invalid')
         return descriptor, parameter, self.read(parameter, 0x28)
+
+    def horse_context(self):
+        manager = self.pointer(self.BASE + 0x4E371D0)
+        if not manager:
+            return None
+        player = self.pointer(manager + 0x480)
+        if not player:
+            return None
+        if self.read(self.pointer(player + 0x20), 7) != b'Player\0':
+            raise NotReady('Link identity is invalid for riding controls')
+        table = self.pointer(player + 0x270)
+        rider = self.pointer(table + 0x3A8) if table else 0
+        if not rider:
+            return None
+        if self.pointer(rider + 0x18) != player:
+            raise NotReady('Link Rider component owner is invalid')
+        if self.unpack(rider + 0x38, '<I')[0] != 1:
+            return None
+        slot = self.pointer(rider + 0x28)
+        serial = self.unpack(rider + 0x30, '<I')[0]
+        if not slot or serial == 0xFFFFFFFF or self.unpack(slot + 0x48, '<I')[0] != serial:
+            return None
+        actor = self.pointer(slot + 0x40)
+        if not actor or 7 <= self.unpack(actor + 0x2C, '<I')[0] <= 11:
+            return None
+        name = b'Animal_Epona_Adult\0'
+        if self.read(self.pointer(actor + 0x20), len(name)) != name:
+            return None
+        table = self.pointer(actor + 0x270)
+        component = self.pointer(table + 0x2A0) if table else 0
+        if (not component or self.pointer(component) != self.BASE + 0x4B4C0C8
+                or self.pointer(component + 0x18) != actor):
+            raise NotReady('Epona riding-speed component validation failed')
+        power = self.unpack(component + 0x3C, '<I')[0]
+        return slot, serial, actor, table, component, power
+
+    def validate_horse_context(self, context):
+        slot, serial, actor, table, component, power = context
+        try:
+            valid = (self.unpack(slot + 0x48, '<I')[0] == serial
+                     and self.pointer(slot + 0x40) == actor
+                     and not 7 <= self.unpack(actor + 0x2C, '<I')[0] <= 11
+                     and self.pointer(actor + 0x270) == table
+                     and self.pointer(table + 0x2A0) == component
+                     and self.pointer(component) == self.BASE + 0x4B4C0C8
+                     and self.pointer(component + 0x18) == actor)
+        except NotReady as error:
+            raise StaleParameter('Epona speed resource was released; write cancelled') from error
+        if not valid:
+            raise StaleParameter('Epona or her riding-speed settings changed; write cancelled')
+        if self.unpack(component + 0x3C, '<I')[0] != power:
+            raise ChangedHorsePower('Epona power changed; dismount and remount before using 2x')
+        return component
+
+    def horse_speed_snapshot(self, context):
+        component = self.validate_horse_context(context)
+        # The gear-speed getter indexes this per-instance cache for gears 1..4.
+        # -1 means the game has not populated it; adjacent values are acceleration.
+        raw = self.read(component + 0x4CC, 16)
+        if not all(math.isfinite(value) and 0.05 <= value <= 64 for value in struct.unpack('<4f', raw)):
+            raise NotReady('Waiting for initialized, valid Epona riding speeds')
+        return raw
+
+    def horse_write_guard(self):
+        # Reuse the existing all-thread pause only for apply/restore transactions.
+        from running import RunSpeed
+        return RunSpeed().paused(self, ())
+
+    def horse_speed_replace(self, context, expected, value, riding):
+        if len(value) != 16 or not all(math.isfinite(x) and 0.05 <= x <= 64 for x in struct.unpack('<4f', value)):
+            raise ValueError('Invalid Epona speed override')
+        with self.horse_write_guard():
+            component = self.validate_horse_context(context)
+            if riding and self.horse_context() != context:
+                raise NotReady('Link dismounted or changed horses; speed write cancelled')
+            if self.read(component + 0x4CC, 16) != expected:
+                raise NotReady('Epona speed changed outside Navi Scout; write cancelled')
+            self.write_verified(component + 0x4CC, value, 'Epona riding speeds')
 
     def validate_parameter_context(self, context):
         descriptor, parameter, header = context

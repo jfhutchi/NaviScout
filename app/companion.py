@@ -21,6 +21,7 @@ from core import RESOURCES, collected, nearby, radar_edge_target, radar_offset
 from hotkeys import GlobalHotkey
 from memory import Game, NotReady
 from player import PlayerModifiers
+from horse import HorseSpeed
 from running import RunSpeed
 from stealth import EnemyStealth
 from damage import EnemyDamage
@@ -75,6 +76,9 @@ class Companion:
         self.run_speed = tk.BooleanVar(value=False)
         self.roll_speed = tk.BooleanVar(value=False)
         self.jump_height = tk.BooleanVar(value=False)
+        self.epona_speed = tk.BooleanVar(value=False)
+        self.epona_text = tk.StringVar(value='Epona speed: normal / riding test pending')
+        self.horse_speed = HorseSpeed()
         self.invisible = tk.BooleanVar(value=False)
         self.damage_2x = tk.BooleanVar(value=False)
         self.damage_text = tk.StringVar(value='Damage to enemies: normal')
@@ -175,13 +179,15 @@ class Companion:
         self.root.after(25, self.poll_hotkey)
         self.root.after(100, self.refresh_timer)
         self.root.after(100, self.refresh_player)
+        self.root.after(100, self.refresh_horse)
         self.root.after(100, self.refresh_stealth)
         self.root.after(100, self.refresh_damage)
         self.root.after(100, self.refresh_diving)
 
     def preference_vars(self):
         return dict(auto=self.auto, link_auto=self.link_auto, run_speed=self.run_speed, roll_speed=self.roll_speed,
-                    jump_height=self.jump_height, invisible=self.invisible, damage_2x=self.damage_2x,
+                    jump_height=self.jump_height, epona_speed=self.epona_speed,
+                    invisible=self.invisible, damage_2x=self.damage_2x,
                     minigames=self.minigames, freeze_timer=self.freeze_timer,
                     dive_mode=self.dive_mode,
                     sound=self.sound, skulls=self.skulls, hearts=self.hearts,
@@ -241,9 +247,18 @@ class Companion:
                      width=5, state='readonly').pack(side='left', padx=7)
         self.controls = ttk.Notebook(self.root, style='Scout.TNotebook', height=365)
         self.controls.pack(fill='x', padx=12, pady=(5, 4))
-        items, link, games, progress = (tk.Frame(self.controls, bg=BG) for _ in range(4))
-        for frame, title in ((items, 'Items'), (link, 'Link'), (games, 'Minigames'), (progress, 'Progress')):
+        items, link_page, games, progress = (tk.Frame(self.controls, bg=BG) for _ in range(4))
+        for frame, title in ((items, 'Items'), (link_page, 'Link'), (games, 'Minigames'), (progress, 'Progress')):
             self.controls.add(frame, text=title)
+        self.link_canvas = tk.Canvas(link_page, bg=BG, highlightthickness=0, yscrollincrement=18)
+        link_scroll = ttk.Scrollbar(link_page, orient='vertical', command=self.link_canvas.yview)
+        self.link_canvas.configure(yscrollcommand=link_scroll.set)
+        link_scroll.pack(side='right', fill='y')
+        self.link_canvas.pack(side='left', fill='both', expand=True)
+        link = self.link_body = tk.Frame(self.link_canvas, bg=BG)
+        link_window = self.link_canvas.create_window(0, 0, window=link, anchor='nw')
+        link.bind('<Configure>', lambda _: self.link_canvas.configure(scrollregion=self.link_canvas.bbox('all')))
+        self.link_canvas.bind('<Configure>', lambda event: self.link_canvas.itemconfigure(link_window, width=event.width))
         self.label('Owned supplies', parent=items, fg=GOLD, font=('Georgia', 12), pady=5)
         grid = tk.Frame(items, bg=BG)
         grid.pack(fill='x', padx=8)
@@ -262,7 +277,7 @@ class Companion:
         row.pack(fill='x', padx=8)
         for name in ('health', 'magic'):
             Switch(row, '', self.enabled[name], textvariable=self.resource_text[name],
-                   width=196, compact=True).pack(side='left', padx=1)
+                   width=184, compact=True).pack(side='left', padx=1)
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=9, pady=4)
         Switch(row, 'Keep meters topped up', self.link_auto).pack(side='left', fill='x', expand=True, padx=(0, 7))
@@ -270,11 +285,13 @@ class Companion:
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=8, pady=2)
         for title, var in [('Run / swim 2x', self.run_speed), ('Damage 2x', self.damage_2x)]:
-            Switch(row, title, var, width=196, compact=True).pack(side='left', padx=1)
+            Switch(row, title, var, width=184, compact=True).pack(side='left', padx=1)
         row = tk.Frame(link, bg=BG)
         row.pack(fill='x', padx=8, pady=2)
         for title, var in [('Roll speed 2x', self.roll_speed), ('Jump height 2x', self.jump_height)]:
-            Switch(row, title, var, width=196, compact=True).pack(side='left', padx=1)
+            Switch(row, title, var, width=184, compact=True).pack(side='left', padx=1)
+        Switch(link, 'Epona riding speed 2x', self.epona_speed).pack(fill='x', padx=9, pady=2)
+        self.label(variable=self.epona_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
         Switch(link, 'Invisible to enemies', self.invisible).pack(fill='x', padx=9, pady=2)
         self.label(variable=self.invisible_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
         self.label(variable=self.movement_text, parent=link, fg=MUTED, font=('Trebuchet MS', 8), wraplength=380)
@@ -284,6 +301,14 @@ class Companion:
         tk.Label(row, text='Dive limit', bg=BG, fg=GOLD, font=('Georgia', 11)).pack(side='left')
         ChoiceStrip(row, self.dive_mode, DIVE_MODES).pack(side='right')
         self.label(variable=self.dive_text, parent=link, fg=MUTED, font=('Trebuchet MS', 9), wraplength=380)
+        def scroll_link(event):
+            self.link_canvas.yview_scroll(-int(event.delta / 120), 'units')
+            return 'break'
+        pending = [link, self.link_canvas]
+        while pending:
+            widget = pending.pop()
+            widget.bind('<MouseWheel>', scroll_link, add='+')
+            pending.extend(widget.winfo_children())
         self.label('Minigame assists', parent=games, fg=GOLD, font=('Georgia', 12), pady=6)
         Switch(games, 'Keep round ammo topped up', self.minigames).pack(fill='x', padx=9, pady=4)
         for name, var in self.minigame_enabled.items():
@@ -333,6 +358,7 @@ class Companion:
         self.roll_speed.set(False)
         self.invisible.set(False)
         self.jump_height.set(False)
+        self.epona_speed.set(False)
         self.dive_mode.set('Off')
         self.freeze_timer.set(False)
         self.status.set(f'Error; refills stopped: {error}')
@@ -619,6 +645,21 @@ class Companion:
             self.dive_text.set(f'Dive control stopped: {error}')
         self.root.after(25 if self.dive_mode.get() != 'Off' else 250, self.refresh_diving)
 
+    def refresh_horse(self):
+        if self.stopped:
+            return
+        try:
+            if not self.game or not self.game.alive():
+                raise NotReady('Waiting for NX2navi')
+            self.epona_text.set(self.horse_speed.update(self.game, self.epona_speed.get()))
+        except NotReady as error:
+            self.epona_text.set(f'Epona speed: {error}')
+        except (OSError, ValueError) as error:
+            self.epona_speed.set(False)
+            logging.exception('Epona speed stopped')
+            self.epona_text.set(f'Epona speed stopped: {error}')
+        self.root.after(25 if self.epona_speed.get() else 250, self.refresh_horse)
+
     def refresh_stealth(self):
         if self.stopped:
             return
@@ -663,7 +704,7 @@ class Companion:
         self.damage_2x.set(False)
         if self.game and self.game.alive():
             errors = []
-            for control in (self.run_modifier, self.player_modifiers, self.dive_limit):
+            for control in (self.run_modifier, self.player_modifiers, self.dive_limit, self.horse_speed):
                 try:
                     control.restore(self.game)
                 except (NotReady, OSError, ValueError) as error:
@@ -687,6 +728,7 @@ class Companion:
                 self.run_speed.set(False)
                 self.roll_speed.set(False)
                 self.jump_height.set(False)
+                self.epona_speed.set(False)
                 self.dive_mode.set('Off')
                 messagebox.showwarning('Navi Scout', f"Some Link settings could not be restored: {'; '.join(errors)}\n"
                                        'Restart NX2navi to clear remaining overrides.', parent=self.root)

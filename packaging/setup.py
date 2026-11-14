@@ -85,7 +85,7 @@ def main():
              font=('Trebuchet MS', 12)).pack(anchor='w', padx=30, pady=(0, 16))
     tk.Label(root, text='Collectible radar, signed height, age labels and area progress\n'
              'Refills for obtained supplies, existing health and magic meters\n'
-             'Movement boosts, dive depth, enemy stealth and 2x enemy damage\n'
+             'Link and Epona speed boosts, dive depth, stealth and 2x enemy damage\n'
              'Minigame ammunition and an optional timer freeze\n\n'
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',
@@ -130,7 +130,7 @@ def main():
             root.after(100, poll)
             return
         if kind == 'done':
-            status.set('Installed. Start Navi Scout to select your game and create its profile backup.')
+            status.set('Installed. Choose Open Navi Scout to start. Existing game connections and settings are kept.')
             install_button.configure(text='Open Navi Scout', command=lambda: subprocess.Popen([str(value / 'NaviScout.exe')], cwd=value))
             install_button.state(['!disabled'])
         else:
