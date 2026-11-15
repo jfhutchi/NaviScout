@@ -91,7 +91,7 @@ def main():
     tk.Label(root, text='Collectible radar, signed height, age labels and area progress\n'
              'Refills for obtained supplies, existing health and magic meters\n'
              'Link and Epona speed boosts, dive depth, stealth and 2x enemy damage\n'
-             'Fishing assists, minigame ammunition and an optional timer freeze\n\n'
+             'Fishing, individual amiibo scans, minigame ammo and timer hold\n\n'
              'Includes its runtime. No Python installation or administrator access needed.\n'
              'Uses your own game files; no game, save or collectible catalog is included.',
              bg='#130f0b', fg='#b3a084', justify='left', font=('Trebuchet MS', 10)).pack(anchor='w', padx=30)

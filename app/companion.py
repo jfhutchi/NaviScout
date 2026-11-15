@@ -29,8 +29,9 @@ from diving import DIVE_MODES, DiveLimit
 from timers import TimerHold
 from alert_audio import prepare_echo_sound
 from fishing import FISHING_OPTIONS, FishingAssists
+from amiibo_ui import AmiiboPage
 from skin import ASSETS, BG, PANEL, TEXT, MUTED, GOLD, FRAME, Switch, ChoiceStrip, apply_style
-from tracking import AGE_FILTERS, decorate_catalog, height_text, age_text, target_caption, area_progress
+from tracking import AGE_FILTERS, decorate_catalog, height_text, age_text, target_caption, area_progress, radar_area
 from settings import VERSION, atomic_json, user_data, validate_game
 
 HERE = Path(__file__).resolve().parent
@@ -272,8 +273,12 @@ class Companion:
         self.controls.pack(fill='x', padx=12, pady=(5, 4))
         items, link_page, games, fishing, progress = (tk.Frame(self.controls, bg=BG) for _ in range(5))
         for frame, title in ((items, 'Items'), (link_page, 'Link'), (games, 'Minigames'),
-                             (fishing, 'Fishing'), (progress, 'Progress')):
+                             (fishing, 'Fishing')):
             self.controls.add(frame, text=title)
+        self.amiibo_page = AmiiboPage(self.controls, self.data_dir, self.game_dir,
+                                      lambda: self.game, lambda: self.stopped, demo=self.demo)
+        self.controls.add(self.amiibo_page, text='amiibo')
+        self.controls.add(progress, text='Progress')
         self.link_canvas = tk.Canvas(link_page, bg=BG, highlightthickness=0, yscrollincrement=18)
         link_scroll = ttk.Scrollbar(link_page, orient='vertical', command=self.link_canvas.yview)
         self.link_canvas.configure(yscrollcommand=link_scroll.set)
@@ -583,6 +588,9 @@ class Companion:
             progress = SimpleNamespace(ids=ids, values=flags)
             self.progress_state = progress
             self.refresh_progress()
+            location, is_child = self.game.radar_location(manager)
+            scene_area = area
+            area = radar_area(scene_area, location, is_child, {x['area'] for x in self.catalog})
             active = [x for x in self.catalog if (self.skulls.get() if x['kind'] == 'skull' else self.hearts.get())]
             rows = nearby(active, area, xyz, progress)
             self.area.set(area.replace('_', ' '))
@@ -620,6 +628,7 @@ class Companion:
             if now >= self.next_record:
                 self.next_record = now + 3
                 state = dict(utc=datetime.now(timezone.utc).isoformat(), pid=self.game.pid, area=area,
+                             scene_area=scene_area, location=location,
                              xyz=xyz, resources=resources, minigame=minigame, timer=self.timer_state,
                              timer_freeze_enabled=self.freeze_timer.get(), found=done, refill_errors=refill_errors,
                              nearest=rows[:5], refills_enabled=self.auto.get(),
@@ -632,6 +641,7 @@ class Companion:
                              alert_sound=self.alert_sound.get(), echo_sound_available=self.echo_sound is not None,
                              fishing_assists={name: value.get() for name, value in self.fishing_enabled.items()},
                              fishing_status=self.fishing_text.get(),
+                             amiibo_status=self.amiibo_page.status.get(),
                              orientation='camera-up', camera_forward=self.game.camera_direction(),
                              radar_hidden=self.hidden, hotkey_registered=self.hotkey is not None)
                 (self.data_dir / 'live-status.local.json').write_text(json.dumps(state, indent=2))
@@ -801,7 +811,7 @@ class Companion:
                     logging.exception('Could not restore trainer settings')
                     errors.append(str(error))
             pending = []
-            for control in (self.enemy_damage, self.enemy_stealth):
+            for control in (self.enemy_damage, self.enemy_stealth, self.amiibo_page.reader):
                 try:
                     control.restore(self.game)
                 except NotReady as error:

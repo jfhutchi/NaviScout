@@ -154,6 +154,15 @@ class Game:
         entry = self.entry(manager, murmur3(name), 16, 0x108)
         return self.read(self.pointer(entry + 0x68), 64).split(b'\0', 1)[0].decode('utf-8')
 
+    def radar_location(self, manager):
+        # This String64 tracks location volumes; CurrentBanc can retain the entry
+        # scene while optimized scene loading moves Link into a neighboring area.
+        entry = self.entry(manager, 0xF74E0E8E, 16, 0x108, 1)
+        location = self.read(self.pointer(entry + 0x68), 64).split(b'\0', 1)[0].decode('utf-8')
+        if not location:
+            raise NotReady('Waiting for the current map location')
+        return location, self.boolean(manager, murmur3('Sequence_IsChildhood'))
+
     def boolean(self, manager, key, expected=None):
         return self.read(self.entry(manager, key, 0, 24, expected) + 22, 1)[0] != 0
 

@@ -1,4 +1,5 @@
 import hashlib
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import zipfile
 import zstandard
 
 from catalog import GameFiles
-from install_support import extract_payload, remove_installed
+from install_support import extract_payload, remove_installed, install
 from settings import APP_ID, BUILD_ID, backup_profile, validate_game
 from windows_support import shell_shortcut
 
@@ -104,6 +105,44 @@ class DistributionTests(unittest.TestCase):
             root = Path(temp)
             with self.assertRaises(ValueError):
                 extract_payload(self.payload(root, digest='0' * 64), root / 'out')
+
+    def test_update_skips_identical_locked_runtime_but_rejects_changed_locked_runtime(self):
+        import shutil
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                      ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+        kernel.CreateFileW.restype = ctypes.c_void_p
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        for changed in (False, True):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                target = root / 'Programs/NaviScout'
+                locked = target / '_internal/VCRUNTIME140.dll'
+                locked.parent.mkdir(parents=True)
+                locked.write_bytes(b'other-code' if changed else b'owned-code')
+                marker = target / 'install-manifest.json'
+                marker.write_text(json.dumps(dict(app_id=APP_ID, version='old')))
+                setup = root / 'setup.exe'
+                setup.write_bytes(b'installer')
+                payload = self.payload(root, name='_internal/VCRUNTIME140.dll')
+                handle = kernel.CreateFileW(str(locked), 0x80000000, 1, None, 3, 0, None)
+                self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+                try:
+                    with patch.dict(os.environ, LOCALAPPDATA=str(root)), \
+                            patch('install_support.executable_running', return_value=False), \
+                            patch('install_support.shortcut_paths', return_value=(root / 'scout.lnk', root / 'menu')), \
+                            patch('install_support.shell_shortcut'), \
+                            patch('install_support.winreg.CreateKey'), \
+                            patch('install_support.winreg.SetValueEx'):
+                        if changed:
+                            with self.assertRaises(shutil.Error):
+                                install(payload, setup)
+                            self.assertEqual(json.loads(marker.read_text())['version'], 'old')
+                        else:
+                            self.assertEqual(install(payload, setup), target)
+                            self.assertNotEqual(json.loads(marker.read_text())['version'], 'old')
+                finally:
+                    kernel.CloseHandle(handle)
 
     def test_installer_rejects_archive_path_traversal(self):
         for name in ('../escape.exe', '/escape.exe', 'C:/escape.exe', 'folder\\escape.exe'):

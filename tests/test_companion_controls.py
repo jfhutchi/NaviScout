@@ -18,7 +18,7 @@ class CompanionControlTests(unittest.TestCase):
 
     def test_separate_assist_and_progress_sections(self):
         self.assertEqual([self.app.controls.tab(tab, 'text') for tab in self.app.controls.tabs()],
-                         ['Items', 'Link', 'Minigames', 'Fishing', 'Progress'])
+                         ['Items', 'Link', 'Minigames', 'Fishing', 'amiibo', 'Progress'])
 
     def test_resource_controls_have_icons_and_readable_two_line_captions(self):
         from core import RESOURCES
@@ -145,6 +145,7 @@ class CompanionControlTests(unittest.TestCase):
             with self.subTest(failing=failing):
                 self.app.game = SimpleNamespace(
                     alive=lambda: True, state=lambda: (0x1000, 'KokiriForest_Child', (1, 0, 0)),
+                    radar_location=lambda _: ('KokiriForest', True),
                     resources=Mock(return_value={}), minigame_resources=Mock(return_value=None),
                     collections=lambda *_: (set(), {101: 0}), camera_direction=lambda: (0, -1))
                 getattr(self.app.game, failing).side_effect = NotReady('Temporary magic or rental state')
@@ -153,6 +154,22 @@ class CompanionControlTests(unittest.TestCase):
                 self.assertTrue(all(row['kind'] == 'skull' for row in self.app.last_rows))
                 self.assertNotIn('Waiting for active gameplay', self.app.alert.get())
                 self.assertIn('Temporary magic or rental state', self.app.status.get())
+
+    def test_radar_uses_live_location_when_entry_scene_is_stale(self):
+        from types import SimpleNamespace
+        self.app.sound.set(False)
+        self.app.next_record = float('inf')
+        self.app.catalog = [dict(kind='skull', id=100, area='LakeHylia_Child',
+                                 xyz=[6, 0, 0], ages=['Child'], region='LakeHylia')]
+        self.app.game = SimpleNamespace(
+            alive=lambda: True, state=lambda: (0x1000, 'HyruleField_Child', (0, 0, 0)),
+            radar_location=lambda _: ('LakeHylia', True), resources=lambda *_: {},
+            minigame_resources=lambda *_: None, collections=lambda *_: (set(), {}),
+            camera_direction=lambda: (0, -1))
+        self.app.tick()
+        self.assertEqual(self.app.area.get(), 'LakeHylia Child')
+        self.assertEqual([row['id'] for row in self.app.last_rows], [100])
+        self.assertIn('Skulltula', self.app.alert.get())
 
     def test_scene_transition_still_clears_radar_and_prevents_refills(self):
         from types import SimpleNamespace

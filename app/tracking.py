@@ -9,6 +9,20 @@ AGES = ('Child', 'Adult')
 AGE_FILTERS = ('All', 'Child', 'Adult', 'Unknown')
 
 
+def radar_area(banc, location, is_child, areas):
+    """Match live location and age to a catalog without guessing by proximity."""
+    aged = f'{location}_{"Child" if is_child else "Adult"}'
+    if banc in (aged, aged + '_Alternative') and banc in areas:
+        return banc
+    if location in areas:
+        return location
+    if aged in areas:
+        return aged
+    if aged + '_Alternative' in areas:
+        return aged + '_Alternative'
+    return location
+
+
 def decorate_catalog(items):
     ages = defaultdict(set)
     for item in items:

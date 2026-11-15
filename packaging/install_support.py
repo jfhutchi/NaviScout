@@ -77,6 +77,16 @@ def extract_payload(payload, target):
     return manifest
 
 
+def copy_changed_payload_file(source, destination):
+    source, destination = Path(source), Path(destination)
+    # A game started by the frozen trainer may retain its runtime DLLs. Leave
+    # byte-identical files alone; changed locked files must still stop the update.
+    if (destination.is_file() and source.stat().st_size == destination.stat().st_size
+            and hashlib.sha256(source.read_bytes()).digest() == hashlib.sha256(destination.read_bytes()).digest()):
+        return str(destination)
+    return shutil.copy2(source, destination)
+
+
 def install(payload, setup_executable, desktop=True):
     if install_dir().is_symlink() or install_dir().is_junction():
         raise ValueError('The installation directory is a filesystem link; installation stopped.')
@@ -90,7 +100,7 @@ def install(payload, setup_executable, desktop=True):
     with tempfile.TemporaryDirectory(prefix='NaviScout-install-') as stage:
         manifest = extract_payload(payload, stage)
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(stage, target, dirs_exist_ok=True)
+        shutil.copytree(stage, target, dirs_exist_ok=True, copy_function=copy_changed_payload_file)
     shutil.copy2(setup_executable, target / 'Uninstall Navi Scout.exe')
     atomic_json(marker, dict(app_id=APP_ID, version=VERSION, files=len(manifest['files'])))
     desktop_link, menu = shortcut_paths()
